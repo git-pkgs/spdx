@@ -1,0 +1,85 @@
+name: Update License Database
+
+on:
+  schedule:
+    # Run weekly on Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download latest license database
+        run: |
+          curl -sL https://scancode-licensedb.aboutcode.org/index.json -o licenses.json.full
+
+          # Check if file is valid JSON
+          if ! jq empty licenses.json.full 2>/dev/null; then
+            echo "Downloaded file is not valid JSON"
+            exit 1
+          fi
+
+          # Check if file has reasonable content
+          count=$(jq length licenses.json.full)
+          if [ "$count" -lt 2500 ]; then
+            echo "Downloaded file has fewer licenses than expected: $count"
+            exit 1
+          fi
+
+          echo "Downloaded $count licenses"
+
+          # Filter to OSS licenses and only needed fields
+          jq '[.[] | select(.category == "Permissive" or .category == "Copyleft" or .category == "Copyleft Limited" or .category == "Public Domain" or .category == "Free Restricted" or .category == "Source-available") | {license_key, category, spdx_license_key, other_spdx_license_keys, is_exception, is_deprecated}]' licenses.json.full > licenses.json.new
+          rm licenses.json.full
+
+          filtered_count=$(jq length licenses.json.new)
+          echo "Filtered to $filtered_count OSS licenses"
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if diff -q licenses.json licenses.json.new > /dev/null 2>&1; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            mv licenses.json.new licenses.json
+
+            # Count changes
+            old_count=$(git show HEAD:licenses.json | jq length)
+            new_count=$(jq length licenses.json)
+            echo "License count: $old_count -> $new_count"
+          fi
+
+      - name: Run tests
+        if: steps.diff.outputs.changed == 'true'
+        run: go test ./...
+
+      - name: Create Pull Request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Update scancode license database"
+          title: "Update scancode license database"
+          body: |
+            Automated update of the scancode-licensedb license database.
+
+            Source: https://scancode-licensedb.aboutcode.org/
+
+            This PR was created automatically by the weekly update workflow.
+          branch: update-license-db
+          delete-branch: true
+          labels: dependencies
