@@ -441,7 +441,7 @@ func BenchmarkNormalize(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, input := range inputs {
-			Normalize(input)
+			_, _ = Normalize(input)
 		}
 	}
 }
@@ -460,7 +460,7 @@ func BenchmarkNormalizeBatch(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, input := range inputs {
-			Normalize(input)
+			_, _ = Normalize(input)
 		}
 	}
 }
@@ -476,7 +476,7 @@ func BenchmarkParse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, expr := range expressions {
-			Parse(expr)
+			_, _ = Parse(expr)
 		}
 	}
 }

@@ -297,7 +297,7 @@ func BenchmarkRealWorldNormalization(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, input := range inputs {
 			// Try ParseLax on everything
-			ParseLax(input)
+			_, _ = ParseLax(input)
 		}
 	}
 }
