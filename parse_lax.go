@@ -44,7 +44,7 @@ func tokenizeForNormalization(expr string) []tokenForNorm {
 			word := current.String()
 			upper := strings.ToUpper(word)
 			switch upper {
-			case "AND", "OR", "WITH":
+			case opAND, opOR, opWITH:
 				tokens = append(tokens, tokenForNorm{value: upper, isOp: true})
 			default:
 				tokens = append(tokens, tokenForNorm{value: word})
@@ -76,109 +76,116 @@ func tokenizeForNormalization(expr string) []tokenForNorm {
 	return tokens
 }
 
+// tokenNormalizer holds state for normalizing a stream of tokens.
+type tokenNormalizer struct {
+	result          strings.Builder
+	licenseWords    []string
+	expectException bool
+}
+
+func (n *tokenNormalizer) flushPending() error {
+	if n.expectException {
+		return n.flushException()
+	}
+	return n.flushLicense()
+}
+
+func (n *tokenNormalizer) flushLicense() error {
+	if len(n.licenseWords) == 0 {
+		return nil
+	}
+
+	normalized, err := normalizeLicenseWords(n.licenseWords)
+	if err != nil {
+		return err
+	}
+
+	if n.result.Len() > 0 && !strings.HasSuffix(n.result.String(), "(") {
+		n.result.WriteString(" ")
+	}
+	n.result.WriteString(normalized)
+	n.licenseWords = nil
+	return nil
+}
+
+func (n *tokenNormalizer) flushException() error {
+	if len(n.licenseWords) == 0 {
+		return nil
+	}
+
+	// Exception should be a single valid exception ID
+	exc := strings.Join(n.licenseWords, "-")
+	if lookupException(exc) == "" {
+		// Try the original form
+		exc = strings.Join(n.licenseWords, " ")
+		if lookupException(exc) == "" {
+			return &LicenseError{License: exc, Err: ErrInvalidException}
+		}
+	}
+
+	n.result.WriteString(" ")
+	n.result.WriteString(lookupException(exc))
+	n.licenseWords = nil
+	return nil
+}
+
+func (n *tokenNormalizer) handleOp(tok tokenForNorm) error {
+	if err := n.flushPending(); err != nil {
+		return err
+	}
+	n.expectException = false
+	n.result.WriteString(" ")
+	n.result.WriteString(tok.value)
+	if tok.value == opWITH {
+		n.expectException = true
+	}
+	return nil
+}
+
+func (n *tokenNormalizer) handleParen(tok tokenForNorm) error {
+	if err := n.flushPending(); err != nil {
+		return err
+	}
+	n.expectException = false
+	if tok.value == "(" {
+		if n.result.Len() > 0 && !strings.HasSuffix(n.result.String(), "(") && !strings.HasSuffix(n.result.String(), " ") {
+			n.result.WriteString(" ")
+		}
+		n.result.WriteString("(")
+	} else {
+		n.result.WriteString(")")
+	}
+	return nil
+}
+
 // normalizeTokens processes tokens and normalizes informal license names.
 func normalizeTokens(tokens []tokenForNorm) (string, error) {
-	var result strings.Builder
-	var licenseWords []string
-	expectException := false // true if we just saw WITH
-
-	flushLicense := func() error {
-		if len(licenseWords) == 0 {
-			return nil
-		}
-
-		normalized, err := normalizeLicenseWords(licenseWords)
-		if err != nil {
-			return err
-		}
-
-		if result.Len() > 0 && !strings.HasSuffix(result.String(), "(") {
-			result.WriteString(" ")
-		}
-		result.WriteString(normalized)
-		licenseWords = nil
-		return nil
-	}
-
-	flushException := func() error {
-		if len(licenseWords) == 0 {
-			return nil
-		}
-
-		// Exception should be a single valid exception ID
-		exc := strings.Join(licenseWords, "-")
-		if lookupException(exc) == "" {
-			// Try the original form
-			exc = strings.Join(licenseWords, " ")
-			if lookupException(exc) == "" {
-				return &LicenseError{License: exc, Err: ErrInvalidException}
-			}
-		}
-
-		result.WriteString(" ")
-		result.WriteString(lookupException(exc))
-		licenseWords = nil
-		return nil
-	}
+	n := &tokenNormalizer{}
 
 	for _, tok := range tokens {
-		if tok.isOp {
-			if expectException {
-				if err := flushException(); err != nil {
-					return "", err
-				}
-				expectException = false
-			} else {
-				if err := flushLicense(); err != nil {
-					return "", err
-				}
+		var err error
+		switch {
+		case tok.isOp:
+			err = n.handleOp(tok)
+		case tok.isParen:
+			err = n.handleParen(tok)
+		case tok.isPlus:
+			if len(n.licenseWords) > 0 {
+				n.licenseWords[len(n.licenseWords)-1] += "+"
 			}
-			result.WriteString(" ")
-			result.WriteString(tok.value)
-			if tok.value == "WITH" {
-				expectException = true
-			}
-		} else if tok.isParen {
-			if expectException {
-				if err := flushException(); err != nil {
-					return "", err
-				}
-				expectException = false
-			} else {
-				if err := flushLicense(); err != nil {
-					return "", err
-				}
-			}
-			if tok.value == "(" {
-				if result.Len() > 0 && !strings.HasSuffix(result.String(), "(") && !strings.HasSuffix(result.String(), " ") {
-					result.WriteString(" ")
-				}
-				result.WriteString("(")
-			} else {
-				result.WriteString(")")
-			}
-		} else if tok.isPlus {
-			// Plus attaches to previous license word
-			if len(licenseWords) > 0 {
-				licenseWords[len(licenseWords)-1] += "+"
-			}
-		} else {
-			// License word (or exception word if expectException)
-			licenseWords = append(licenseWords, tok.value)
+		default:
+			n.licenseWords = append(n.licenseWords, tok.value)
 		}
-	}
-
-	if expectException {
-		if err := flushException(); err != nil {
-			return "", err
-		}
-	} else {
-		if err := flushLicense(); err != nil {
+		if err != nil {
 			return "", err
 		}
 	}
 
-	return strings.TrimSpace(result.String()), nil
+	if err := n.flushPending(); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(n.result.String()), nil
 }
 
 // normalizeLicenseWords takes a slice of words that should form a license name

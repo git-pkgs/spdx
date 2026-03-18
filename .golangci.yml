@@ -2,3 +2,9 @@ version: "2"
 linters:
   disable:
     - unused
+  settings:
+    ireturn:
+      allow:
+        - error
+        - stdlib
+        - github.com/git-pkgs/spdx.Expression
