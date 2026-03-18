@@ -1,0 +1,33 @@
+category.go
+  964bdda58acf65ce 55-57
+spdx_correct_test.go
+  964bdda58acf65ce 8
+parse_lax.go
+  964bdda58acf65ce 47,79-81,83-84,86-91,93-94,98,103-104,106-109,111-112,117-120,122,126-140,142-152,154,156-163,166-174,176-177,179,184-185,188
+parse.go
+  964bdda58acf65ce 163-166,229-234
+normalize.go
+  964bdda58acf65ce 249
+.golangci.yml
+  964bdda58acf65ce 5-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "29ce1bcf4d246a33e01bea83f64179eb5327bc93",
+  "prompts": {
+    "964bdda58acf65ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7f2a060c-bab4-4496-9d53-40287a5b3f12",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Andrew Nesbitt <andrewnez@gmail.com>",
+      "messages": [],
+      "total_additions": 118,
+      "total_deletions": 99,
+      "accepted_lines": 107,
+      "overriden_lines": 0
+    }
+  }
+}
