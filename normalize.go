@@ -160,9 +160,9 @@ type transform func(string) string
 
 var transforms = []transform{
 	// Uppercase
-	func(s string) string { return strings.ToUpper(s) },
+	strings.ToUpper,
 	// Trim whitespace
-	func(s string) string { return strings.TrimSpace(s) },
+	strings.TrimSpace,
 	// Remove dots (M.I.T. -> MIT)
 	func(s string) string { return strings.ReplaceAll(s, ".", "") },
 	// Remove all whitespace (Apache- 2.0 -> Apache-2.0)
@@ -246,7 +246,7 @@ var transforms = []transform{
 		if result != s && !strings.HasPrefix(result, "CC-") {
 			result = "CC-" + result
 			if !reCCVersion.MatchString(result) {
-				result = result + "-4.0"
+				result += "-4.0"
 			}
 		}
 		return result

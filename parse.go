@@ -160,6 +160,10 @@ const (
 	tokenOpenParen
 	tokenCloseParen
 	tokenEOF
+
+	opAND  = "AND"
+	opOR   = "OR"
+	opWITH = "WITH"
 )
 
 type token struct {
@@ -222,12 +226,12 @@ func (l *lexer) next() (token, error) {
 	upper := strings.ToUpper(word)
 
 	switch upper {
-	case "AND":
-		return token{typ: tokenAnd, value: "AND"}, nil
-	case "OR":
-		return token{typ: tokenOr, value: "OR"}, nil
-	case "WITH":
-		return token{typ: tokenWith, value: "WITH"}, nil
+	case opAND:
+		return token{typ: tokenAnd, value: opAND}, nil
+	case opOR:
+		return token{typ: tokenOr, value: opOR}, nil
+	case opWITH:
+		return token{typ: tokenWith, value: opWITH}, nil
 	}
 
 	// Check for DocumentRef or LicenseRef

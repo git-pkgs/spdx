@@ -5,7 +5,7 @@ import "testing"
 // TestSPDXCorrectCompatibility tests our implementation against spdx-correct.js test cases.
 // spdx-correct.js is maintained by a license lawyer and is the de facto standard.
 // Source: https://github.com/jslicense/spdx-correct.js/blob/main/test.js
-func TestSPDXCorrectCompatibility(t *testing.T) {
+func TestSPDXCorrectCompatibility(t *testing.T) { //nolint:maintidx // large table-driven test by design
 	// These are the test cases from spdx-correct.js with upgrade: true (default)
 	cases := map[string]string{
 		// BSD variants

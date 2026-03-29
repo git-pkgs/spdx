@@ -52,7 +52,9 @@ func initCategoryMap() {
 			return
 		}
 
-		categoryMap = make(map[string]Category, len(licenseData)*2)
+		// Each entry may have a primary SPDX key, alternative keys, and a license_key.
+		estimatedKeys := 3
+		categoryMap = make(map[string]Category, len(licenseData)*estimatedKeys)
 		for _, entry := range licenseData {
 			cat := Category(entry.Category)
 			if cat == "" {
