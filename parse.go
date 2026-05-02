@@ -144,6 +144,7 @@ var (
 	ErrInvalidException    = errors.New("invalid exception identifier")
 	ErrMissingOperand      = errors.New("missing operand")
 	ErrInvalidSpecialValue = errors.New("NONE and NOASSERTION must be standalone")
+	ErrExpressionTooLarge  = errors.New("expression too large")
 )
 
 // tokenType represents the type of a lexer token.
@@ -246,10 +247,16 @@ func (l *lexer) next() (token, error) {
 	return token{typ: tokenLicense, value: word}, nil
 }
 
+const (
+	maxParseDepth  = 256
+	maxParseLength = 1 << 20 // 1 MiB
+)
+
 // parser parses SPDX expressions.
 type parser struct {
 	lexer   *lexer
 	current token
+	depth   int
 }
 
 func newParser(input string) (*parser, error) {
@@ -288,6 +295,9 @@ func Parse(expression string) (Expression, error) {
 	if expression == "" {
 		return nil, ErrEmptyExpression
 	}
+	if len(expression) > maxParseLength {
+		return nil, ErrExpressionTooLarge
+	}
 
 	// Pre-process: normalize informal license names while preserving operators
 	normalized, err := normalizeExpressionString(expression)
@@ -325,6 +335,9 @@ func ParseStrict(expression string) (Expression, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return nil, ErrEmptyExpression
+	}
+	if len(expression) > maxParseLength {
+		return nil, ErrExpressionTooLarge
 	}
 
 	p, err := newParser(expression)
@@ -431,6 +444,11 @@ func (p *parser) parseWith() (Expression, error) {
 func (p *parser) parseAtom() (Expression, error) {
 	switch p.current.typ {
 	case tokenOpenParen:
+		p.depth++
+		if p.depth > maxParseDepth {
+			return nil, ErrExpressionTooLarge
+		}
+
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
@@ -448,6 +466,7 @@ func (p *parser) parseAtom() (Expression, error) {
 			return nil, err
 		}
 
+		p.depth--
 		return expr, nil
 
 	case tokenLicense:
