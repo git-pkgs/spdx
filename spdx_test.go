@@ -1,6 +1,8 @@
 package spdx
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -566,5 +568,32 @@ func TestParseStrictRejectsInformalLicenses(t *testing.T) {
 				t.Errorf("ParseStrict(%q) failed: %v", input, err)
 			}
 		})
+	}
+}
+
+func TestParseDeeplyNestedReturnsError(t *testing.T) {
+	input := strings.Repeat("(", 1000) + "MIT" + strings.Repeat(")", 1000)
+	_, err := ParseStrict(input)
+	if !errors.Is(err, ErrExpressionTooLarge) {
+		t.Fatalf("expected ErrExpressionTooLarge, got %v", err)
+	}
+}
+
+func TestParseStrictRejectsOversizedInput(t *testing.T) {
+	input := strings.Repeat("X", maxParseLength+1)
+	_, err := ParseStrict(input)
+	if !errors.Is(err, ErrExpressionTooLarge) {
+		t.Fatalf("expected ErrExpressionTooLarge, got %v", err)
+	}
+}
+
+func TestParseModerateNestingStillWorks(t *testing.T) {
+	input := strings.Repeat("(", 200) + "MIT" + strings.Repeat(")", 200)
+	expr, err := ParseStrict(input)
+	if err != nil {
+		t.Fatalf("ParseStrict on moderate nesting failed: %v", err)
+	}
+	if expr.String() != "MIT" {
+		t.Errorf("expected MIT, got %q", expr.String())
 	}
 }
