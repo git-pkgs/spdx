@@ -190,9 +190,14 @@ func normalizeTokens(tokens []tokenForNorm) (string, error) {
 
 // normalizeLicenseWords takes a slice of words that should form a license name
 // and tries to normalize them. It uses greedy matching from the start.
+const maxLicenseWords = 256
+
 func normalizeLicenseWords(words []string) (string, error) {
 	if len(words) == 0 {
 		return "", ErrMissingOperand
+	}
+	if len(words) > maxLicenseWords {
+		return "", &LicenseError{License: words[0], Err: ErrInvalidLicenseID}
 	}
 
 	// Check for special values, LicenseRef or DocumentRef first

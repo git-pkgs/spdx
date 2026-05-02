@@ -1,6 +1,7 @@
 package spdx
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -144,5 +145,18 @@ func BenchmarkParseLax(b *testing.B) {
 		for _, expr := range expressions {
 			_, _ = ParseLax(expr)
 		}
+	}
+}
+
+func TestNormalizeLicenseWordsCapped(t *testing.T) {
+	words := make([]string, 300)
+	for i := range words {
+		words[i] = "word"
+	}
+	input := strings.Join(words, " ")
+
+	_, err := ParseLax(input)
+	if err == nil {
+		t.Error("expected error for input with too many words")
 	}
 }
