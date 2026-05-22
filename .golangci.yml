@@ -3,6 +3,8 @@ linters:
   disable:
     - unused
   settings:
+    goconst:
+      ignore-tests: true
     ireturn:
       allow:
         - error
