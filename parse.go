@@ -13,13 +13,14 @@ type Expression interface {
 	String() string
 	// Licenses returns all license identifiers in the expression.
 	Licenses() []string
+	rewriteIdentifiers(func(string) string) Expression
 	isExpr()
 }
 
 // License represents a single SPDX license identifier.
 type License struct {
-	ID       string // The canonical license ID
-	Plus     bool   // True if followed by +
+	ID        string // The canonical license ID
+	Plus      bool   // True if followed by +
 	Exception string // Exception ID if using WITH
 }
 

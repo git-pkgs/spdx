@@ -136,29 +136,6 @@ func TestRewriteIdentifiersNilFunction(t *testing.T) {
 	}
 }
 
-func TestRewriteIdentifiersRejectsUnsupportedNode(t *testing.T) {
-	t.Parallel()
-
-	defer func() {
-		if recovered := recover(); recovered == nil {
-			t.Error("RewriteIdentifiers did not panic")
-		}
-	}()
-	RewriteIdentifiers(unsupportedExpression{}, strings.ToLower)
-}
-
-type unsupportedExpression struct{}
-
-func (unsupportedExpression) String() string {
-	return "unsupported"
-}
-
-func (unsupportedExpression) Licenses() []string {
-	return nil
-}
-
-func (unsupportedExpression) isExpr() {}
-
 func BenchmarkRewriteIdentifiers(b *testing.B) {
 	expression, err := ParseStrict(
 		"MIT OR GPL-2.0-only WITH Classpath-exception-2.0",
