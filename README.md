@@ -48,6 +48,26 @@ expr, err := spdx.ParseStrict("MIT OR Apache-2.0")  // succeeds
 expr, err := spdx.ParseStrict("Apache 2 OR MIT")    // fails
 ```
 
+### Rewrite expression identifiers
+
+Parse an expression once, then replace its identifiers while keeping its
+operators and precedence:
+
+```go
+expr, err := spdx.ParseStrict(
+    "MIT OR GPL-2.0-only WITH Classpath-exception-2.0",
+)
+rewritten := spdx.RewriteIdentifiers(expr, func(id string) string {
+    return strings.ToLower(id)
+})
+fmt.Println(rewritten)
+// "mit OR (gpl-2.0-only WITH classpath-exception-2.0)"
+```
+
+The callback receives license identifiers, exception identifiers, and complete
+`LicenseRef` or `DocumentRef` values in expression order. Replacement values
+are not validated as SPDX identifiers.
+
 ### Validate licenses
 
 ```go
