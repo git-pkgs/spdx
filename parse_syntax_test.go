@@ -98,6 +98,12 @@ func TestParseSyntaxRejectsMalformedExpressions(t *testing.T) {
 		"MIT/Apache-2.0",
 		"Future_License-1.0",
 		"MIT WITH Future/exception",
+		"LicenseRef-",
+		"LicenseRef-invalid/value",
+		"DocumentRef-vendor",
+		"DocumentRef-:LicenseRef-custom",
+		"DocumentRef-vendor:LicenseRef-",
+		"DocumentRef-vendor:LicenseRef-invalid/value",
 	}
 	for _, input := range inputs {
 		t.Run(input, func(t *testing.T) {

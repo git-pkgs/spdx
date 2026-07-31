@@ -449,12 +449,9 @@ func (p *parser) parseWith() (Expression, error) {
 			return nil, fmt.Errorf("%w: expected exception after WITH", ErrMissingOperand)
 		}
 
-		exception := lookupException(p.current.value)
-		if exception == "" {
-			if !p.allowUnknownIdentifiers || !validIdentifier(p.current.value) {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidException, p.current.value)
-			}
-			exception = p.current.value
+		exception, err := p.resolveExceptionIdentifier(p.current.value)
+		if err != nil {
+			return nil, err
 		}
 
 		license.Exception = exception
@@ -497,55 +494,13 @@ func (p *parser) parseAtom() (Expression, error) {
 		return expr, nil
 
 	case tokenLicense:
-		value := p.current.value
-		upper := strings.ToUpper(value)
-
-		// Handle special values
-		if upper == "NONE" || upper == "NOASSERTION" {
-			if err := p.advance(); err != nil {
-				return nil, err
-			}
-			return &SpecialValue{Value: upper}, nil
-		}
-
-		// Look up the canonical license ID
-		id := lookupLicense(value)
-		if id == "" {
-			if !p.allowUnknownIdentifiers || !validIdentifier(value) {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
-			}
-			id = value
-		}
-
-		license := &License{ID: id}
-
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-
-		// Check for +
-		if p.current.typ == tokenPlus {
-			license.Plus = true
-			if err := p.advance(); err != nil {
-				return nil, err
-			}
-		}
-
-		return license, nil
+		return p.parseLicenseAtom()
 
 	case tokenLicenseRef:
-		ref := parseLicenseRef(p.current.value)
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-		return ref, nil
+		return p.parseLicenseReference(false)
 
 	case tokenDocumentRef:
-		ref := parseDocumentRef(p.current.value)
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-		return ref, nil
+		return p.parseLicenseReference(true)
 
 	case tokenEOF:
 		return nil, ErrMissingOperand
@@ -553,6 +508,80 @@ func (p *parser) parseAtom() (Expression, error) {
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
 	}
+}
+
+func (p *parser) parseLicenseAtom() (Expression, error) {
+	value := p.current.value
+	upper := strings.ToUpper(value)
+	if upper == "NONE" || upper == "NOASSERTION" {
+		if err := p.advance(); err != nil {
+			return nil, err
+		}
+		return &SpecialValue{Value: upper}, nil
+	}
+
+	id, err := p.resolveLicenseIdentifier(value)
+	if err != nil {
+		return nil, err
+	}
+	license := &License{ID: id}
+	if err := p.advance(); err != nil {
+		return nil, err
+	}
+	if p.current.typ == tokenPlus {
+		license.Plus = true
+		if err := p.advance(); err != nil {
+			return nil, err
+		}
+	}
+	return license, nil
+}
+
+func (p *parser) resolveLicenseIdentifier(identifier string) (string, error) {
+	if id := lookupLicense(identifier); id != "" {
+		return id, nil
+	}
+	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+		return identifier, nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrInvalidLicenseID, identifier)
+}
+
+func (p *parser) resolveExceptionIdentifier(identifier string) (string, error) {
+	if exception := lookupException(identifier); exception != "" {
+		return exception, nil
+	}
+	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+		return identifier, nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrInvalidException, identifier)
+}
+
+func (p *parser) parseLicenseReference(document bool) (Expression, error) {
+	value := p.current.value
+	var reference *LicenseRef
+	if document {
+		reference = parseDocumentRef(value)
+	} else {
+		reference = parseLicenseRef(value)
+	}
+	if !validLicenseReference(reference, document) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
+	}
+	if err := p.advance(); err != nil {
+		return nil, err
+	}
+	return reference, nil
+}
+
+func validLicenseReference(reference *LicenseRef, document bool) bool {
+	if reference == nil || !validIdentifier(reference.LicenseRef) {
+		return false
+	}
+	if document {
+		return validIdentifier(reference.DocumentRef)
+	}
+	return reference.DocumentRef == ""
 }
 
 func validIdentifier(identifier string) bool {
