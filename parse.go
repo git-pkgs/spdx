@@ -255,13 +255,17 @@ const (
 
 // parser parses SPDX expressions.
 type parser struct {
-	lexer   *lexer
-	current token
-	depth   int
+	lexer                   *lexer
+	current                 token
+	depth                   int
+	allowUnknownIdentifiers bool
 }
 
-func newParser(input string) (*parser, error) {
-	p := &parser{lexer: newLexer(input)}
+func newParser(input string, allowUnknownIdentifiers bool) (*parser, error) {
+	p := &parser{
+		lexer:                   newLexer(input),
+		allowUnknownIdentifiers: allowUnknownIdentifiers,
+	}
 	tok, err := p.lexer.next()
 	if err != nil {
 		return nil, err
@@ -306,21 +310,12 @@ func Parse(expression string) (Expression, error) {
 		return nil, err
 	}
 
-	p, err := newParser(normalized)
+	p, err := newParser(normalized, false)
 	if err != nil {
 		return nil, err
 	}
 
-	expr, err := p.parseExpression()
-	if err != nil {
-		return nil, err
-	}
-
-	if p.current.typ != tokenEOF {
-		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
-	}
-
-	return expr, nil
+	return p.parse()
 }
 
 // ParseStrict parses an SPDX expression requiring strict SPDX identifiers.
@@ -333,6 +328,30 @@ func Parse(expression string) (Expression, error) {
 //	ParseStrict("MIT OR Apache-2.0")  // succeeds
 //	ParseStrict("mit OR apache 2")    // fails - "apache 2" is not a valid SPDX ID
 func ParseStrict(expression string) (Expression, error) {
+	return parseWithoutNormalization(expression, false)
+}
+
+// ParseSyntax parses an SPDX expression without requiring bare license and
+// exception identifiers to exist in the bundled SPDX identifier list. It
+// validates identifier syntax, operators, modifiers, and grouping. Known
+// identifiers are returned in their canonical form; unknown identifiers are
+// preserved as written.
+//
+// Use ParseStrict when identifiers must also be present in the bundled SPDX
+// list.
+//
+// Example:
+//
+//	ParseSyntax("Future-License-1.0 OR MIT") // succeeds
+//	ParseStrict("Future-License-1.0 OR MIT") // fails
+func ParseSyntax(expression string) (Expression, error) {
+	return parseWithoutNormalization(expression, true)
+}
+
+func parseWithoutNormalization(
+	expression string,
+	allowUnknownIdentifiers bool,
+) (Expression, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return nil, ErrEmptyExpression
@@ -341,11 +360,15 @@ func ParseStrict(expression string) (Expression, error) {
 		return nil, ErrExpressionTooLarge
 	}
 
-	p, err := newParser(expression)
+	p, err := newParser(expression, allowUnknownIdentifiers)
 	if err != nil {
 		return nil, err
 	}
 
+	return p.parse()
+}
+
+func (p *parser) parse() (Expression, error) {
 	expr, err := p.parseExpression()
 	if err != nil {
 		return nil, err
@@ -428,7 +451,10 @@ func (p *parser) parseWith() (Expression, error) {
 
 		exception := lookupException(p.current.value)
 		if exception == "" {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidException, p.current.value)
+			if !p.allowUnknownIdentifiers || !validIdentifier(p.current.value) {
+				return nil, fmt.Errorf("%w: %s", ErrInvalidException, p.current.value)
+			}
+			exception = p.current.value
 		}
 
 		license.Exception = exception
@@ -485,7 +511,10 @@ func (p *parser) parseAtom() (Expression, error) {
 		// Look up the canonical license ID
 		id := lookupLicense(value)
 		if id == "" {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
+			if !p.allowUnknownIdentifiers || !validIdentifier(value) {
+				return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
+			}
+			id = value
 		}
 
 		license := &License{ID: id}
@@ -524,6 +553,23 @@ func (p *parser) parseAtom() (Expression, error) {
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
 	}
+}
+
+func validIdentifier(identifier string) bool {
+	if identifier == "" {
+		return false
+	}
+	for _, character := range identifier {
+		switch {
+		case character >= 'a' && character <= 'z':
+		case character >= 'A' && character <= 'Z':
+		case character >= '0' && character <= '9':
+		case character == '-', character == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // parseLicenseRef parses "LicenseRef-xxx" into a LicenseRef.
