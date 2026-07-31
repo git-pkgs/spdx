@@ -585,20 +585,25 @@ func validLicenseReference(reference *LicenseRef, document bool) bool {
 }
 
 func validIdentifier(identifier string) bool {
-	if identifier == "" {
+	if identifier == "" || !isIdentifierAlphanumeric(rune(identifier[0])) ||
+		!isIdentifierAlphanumeric(rune(identifier[len(identifier)-1])) {
 		return false
 	}
 	for _, character := range identifier {
 		switch {
-		case character >= 'a' && character <= 'z':
-		case character >= 'A' && character <= 'Z':
-		case character >= '0' && character <= '9':
+		case isIdentifierAlphanumeric(character):
 		case character == '-', character == '.':
 		default:
 			return false
 		}
 	}
 	return true
+}
+
+func isIdentifierAlphanumeric(character rune) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
 }
 
 // parseLicenseRef parses "LicenseRef-xxx" into a LicenseRef.
