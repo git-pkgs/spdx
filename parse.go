@@ -255,13 +255,17 @@ const (
 
 // parser parses SPDX expressions.
 type parser struct {
-	lexer   *lexer
-	current token
-	depth   int
+	lexer                   *lexer
+	current                 token
+	depth                   int
+	allowUnknownIdentifiers bool
 }
 
-func newParser(input string) (*parser, error) {
-	p := &parser{lexer: newLexer(input)}
+func newParser(input string, allowUnknownIdentifiers bool) (*parser, error) {
+	p := &parser{
+		lexer:                   newLexer(input),
+		allowUnknownIdentifiers: allowUnknownIdentifiers,
+	}
 	tok, err := p.lexer.next()
 	if err != nil {
 		return nil, err
@@ -306,21 +310,12 @@ func Parse(expression string) (Expression, error) {
 		return nil, err
 	}
 
-	p, err := newParser(normalized)
+	p, err := newParser(normalized, false)
 	if err != nil {
 		return nil, err
 	}
 
-	expr, err := p.parseExpression()
-	if err != nil {
-		return nil, err
-	}
-
-	if p.current.typ != tokenEOF {
-		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
-	}
-
-	return expr, nil
+	return p.parse()
 }
 
 // ParseStrict parses an SPDX expression requiring strict SPDX identifiers.
@@ -333,6 +328,30 @@ func Parse(expression string) (Expression, error) {
 //	ParseStrict("MIT OR Apache-2.0")  // succeeds
 //	ParseStrict("mit OR apache 2")    // fails - "apache 2" is not a valid SPDX ID
 func ParseStrict(expression string) (Expression, error) {
+	return parseWithoutNormalization(expression, false)
+}
+
+// ParseSyntax parses an SPDX expression without requiring bare license and
+// exception identifiers to exist in the bundled SPDX identifier list. It
+// validates identifier syntax, operators, modifiers, and grouping. Known
+// identifiers are returned in their canonical form; unknown identifiers are
+// preserved as written.
+//
+// Use ParseStrict when identifiers must also be present in the bundled SPDX
+// list.
+//
+// Example:
+//
+//	ParseSyntax("Future-License-1.0 OR MIT") // succeeds
+//	ParseStrict("Future-License-1.0 OR MIT") // fails
+func ParseSyntax(expression string) (Expression, error) {
+	return parseWithoutNormalization(expression, true)
+}
+
+func parseWithoutNormalization(
+	expression string,
+	allowUnknownIdentifiers bool,
+) (Expression, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return nil, ErrEmptyExpression
@@ -341,11 +360,15 @@ func ParseStrict(expression string) (Expression, error) {
 		return nil, ErrExpressionTooLarge
 	}
 
-	p, err := newParser(expression)
+	p, err := newParser(expression, allowUnknownIdentifiers)
 	if err != nil {
 		return nil, err
 	}
 
+	return p.parse()
+}
+
+func (p *parser) parse() (Expression, error) {
 	expr, err := p.parseExpression()
 	if err != nil {
 		return nil, err
@@ -426,9 +449,9 @@ func (p *parser) parseWith() (Expression, error) {
 			return nil, fmt.Errorf("%w: expected exception after WITH", ErrMissingOperand)
 		}
 
-		exception := lookupException(p.current.value)
-		if exception == "" {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidException, p.current.value)
+		exception, err := p.resolveExceptionIdentifier(p.current.value)
+		if err != nil {
+			return nil, err
 		}
 
 		license.Exception = exception
@@ -471,52 +494,13 @@ func (p *parser) parseAtom() (Expression, error) {
 		return expr, nil
 
 	case tokenLicense:
-		value := p.current.value
-		upper := strings.ToUpper(value)
-
-		// Handle special values
-		if upper == "NONE" || upper == "NOASSERTION" {
-			if err := p.advance(); err != nil {
-				return nil, err
-			}
-			return &SpecialValue{Value: upper}, nil
-		}
-
-		// Look up the canonical license ID
-		id := lookupLicense(value)
-		if id == "" {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
-		}
-
-		license := &License{ID: id}
-
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-
-		// Check for +
-		if p.current.typ == tokenPlus {
-			license.Plus = true
-			if err := p.advance(); err != nil {
-				return nil, err
-			}
-		}
-
-		return license, nil
+		return p.parseLicenseAtom()
 
 	case tokenLicenseRef:
-		ref := parseLicenseRef(p.current.value)
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-		return ref, nil
+		return p.parseLicenseReference(false)
 
 	case tokenDocumentRef:
-		ref := parseDocumentRef(p.current.value)
-		if err := p.advance(); err != nil {
-			return nil, err
-		}
-		return ref, nil
+		return p.parseLicenseReference(true)
 
 	case tokenEOF:
 		return nil, ErrMissingOperand
@@ -524,6 +508,102 @@ func (p *parser) parseAtom() (Expression, error) {
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
 	}
+}
+
+func (p *parser) parseLicenseAtom() (Expression, error) {
+	value := p.current.value
+	upper := strings.ToUpper(value)
+	if upper == "NONE" || upper == "NOASSERTION" {
+		if err := p.advance(); err != nil {
+			return nil, err
+		}
+		return &SpecialValue{Value: upper}, nil
+	}
+
+	id, err := p.resolveLicenseIdentifier(value)
+	if err != nil {
+		return nil, err
+	}
+	license := &License{ID: id}
+	if err := p.advance(); err != nil {
+		return nil, err
+	}
+	if p.current.typ == tokenPlus {
+		license.Plus = true
+		if err := p.advance(); err != nil {
+			return nil, err
+		}
+	}
+	return license, nil
+}
+
+func (p *parser) resolveLicenseIdentifier(identifier string) (string, error) {
+	if id := lookupLicense(identifier); id != "" {
+		return id, nil
+	}
+	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+		return identifier, nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrInvalidLicenseID, identifier)
+}
+
+func (p *parser) resolveExceptionIdentifier(identifier string) (string, error) {
+	if exception := lookupException(identifier); exception != "" {
+		return exception, nil
+	}
+	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+		return identifier, nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrInvalidException, identifier)
+}
+
+func (p *parser) parseLicenseReference(document bool) (Expression, error) {
+	value := p.current.value
+	var reference *LicenseRef
+	if document {
+		reference = parseDocumentRef(value)
+	} else {
+		reference = parseLicenseRef(value)
+	}
+	if !validLicenseReference(reference, document) {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidLicenseID, value)
+	}
+	if err := p.advance(); err != nil {
+		return nil, err
+	}
+	return reference, nil
+}
+
+func validLicenseReference(reference *LicenseRef, document bool) bool {
+	if reference == nil || !validIdentifier(reference.LicenseRef) {
+		return false
+	}
+	if document {
+		return validIdentifier(reference.DocumentRef)
+	}
+	return reference.DocumentRef == ""
+}
+
+func validIdentifier(identifier string) bool {
+	if identifier == "" || !isIdentifierAlphanumeric(rune(identifier[0])) ||
+		!isIdentifierAlphanumeric(rune(identifier[len(identifier)-1])) {
+		return false
+	}
+	for _, character := range identifier {
+		switch {
+		case isIdentifierAlphanumeric(character):
+		case character == '-', character == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierAlphanumeric(character rune) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
 }
 
 // parseLicenseRef parses "LicenseRef-xxx" into a LicenseRef.
