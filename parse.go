@@ -179,10 +179,6 @@ type lexer struct {
 	pos   int
 }
 
-func newLexer(input string) *lexer {
-	return &lexer{input: input}
-}
-
 func (l *lexer) skipWhitespace() {
 	for l.pos < len(l.input) && unicode.IsSpace(rune(l.input[l.pos])) {
 		l.pos++
@@ -225,23 +221,22 @@ func (l *lexer) next() (token, error) {
 	}
 
 	word := l.input[start:l.pos]
-	upper := strings.ToUpper(word)
 
-	switch upper {
-	case opAND:
+	switch {
+	case strings.EqualFold(word, opAND):
 		return token{typ: tokenAnd, value: opAND}, nil
-	case opOR:
+	case strings.EqualFold(word, opOR):
 		return token{typ: tokenOr, value: opOR}, nil
-	case opWITH:
+	case strings.EqualFold(word, opWITH):
 		return token{typ: tokenWith, value: opWITH}, nil
 	}
 
 	// Check for DocumentRef or LicenseRef
-	if strings.HasPrefix(upper, "DOCUMENTREF-") {
+	if hasPrefixFold(word, "DocumentRef-") {
 		// DocumentRef-xxx:LicenseRef-yyy
 		return token{typ: tokenDocumentRef, value: word}, nil
 	}
-	if strings.HasPrefix(upper, "LICENSEREF-") {
+	if hasPrefixFold(word, "LicenseRef-") {
 		return token{typ: tokenLicenseRef, value: word}, nil
 	}
 
@@ -255,20 +250,20 @@ const (
 
 // parser parses SPDX expressions.
 type parser struct {
-	lexer                   *lexer
+	lexer                   lexer
 	current                 token
 	depth                   int
 	allowUnknownIdentifiers bool
 }
 
-func newParser(input string, allowUnknownIdentifiers bool) (*parser, error) {
-	p := &parser{
-		lexer:                   newLexer(input),
+func newParser(input string, allowUnknownIdentifiers bool) (parser, error) {
+	p := parser{
+		lexer:                   lexer{input: input},
 		allowUnknownIdentifiers: allowUnknownIdentifiers,
 	}
 	tok, err := p.lexer.next()
 	if err != nil {
-		return nil, err
+		return parser{}, err
 	}
 	p.current = tok
 	return p, nil
@@ -304,18 +299,48 @@ func Parse(expression string) (Expression, error) {
 		return nil, ErrExpressionTooLarge
 	}
 
-	// Pre-process: normalize informal license names while preserving operators
+	// Canonical expressions do not need the informal-name tokenization pass.
+	p, err := newParser(expression, false)
+	if err == nil {
+		if parsed, strictErr := p.parse(); strictErr == nil {
+			upgradeParsedGPL(parsed)
+			return parsed, nil
+		}
+	}
+
+	// Pre-process: normalize informal license names while preserving operators.
 	normalized, err := normalizeExpressionString(expression)
 	if err != nil {
 		return nil, err
 	}
 
-	p, err := newParser(normalized, false)
+	p, err = newParser(normalized, false)
 	if err != nil {
 		return nil, err
 	}
 
 	return p.parse()
+}
+
+func upgradeParsedGPL(expression Expression) {
+	switch value := expression.(type) {
+	case *License:
+		license := value.ID
+		if value.Plus {
+			license += "+"
+		}
+		upgraded := upgradeGPL(license)
+		if upgraded != license {
+			value.ID = upgraded
+			value.Plus = false
+		}
+	case *AndExpression:
+		upgradeParsedGPL(value.Left)
+		upgradeParsedGPL(value.Right)
+	case *OrExpression:
+		upgradeParsedGPL(value.Left)
+		upgradeParsedGPL(value.Right)
+	}
 }
 
 // ParseStrict parses an SPDX expression requiring strict SPDX identifiers.
@@ -366,6 +391,154 @@ func parseWithoutNormalization(
 	}
 
 	return p.parse()
+}
+
+type validatedExpressionKind uint8
+
+const (
+	validatedOther validatedExpressionKind = iota
+	validatedLicense
+)
+
+type validationParser struct {
+	lexer   lexer
+	current token
+	depth   int
+}
+
+func validStrictExpression(expression string) bool {
+	expression = strings.TrimSpace(expression)
+	if expression == "" || len(expression) > maxParseLength {
+		return false
+	}
+
+	validator := validationParser{lexer: lexer{input: expression}}
+	if !validator.advance() {
+		return false
+	}
+	if _, ok := validator.parseExpression(); !ok {
+		return false
+	}
+	return validator.current.typ == tokenEOF
+}
+
+func (p *validationParser) advance() bool {
+	tok, err := p.lexer.next()
+	if err != nil {
+		return false
+	}
+	p.current = tok
+	return true
+}
+
+func (p *validationParser) parseExpression() (validatedExpressionKind, bool) {
+	kind, ok := p.parseAnd()
+	if !ok {
+		return validatedOther, false
+	}
+	for p.current.typ == tokenOr {
+		if !p.advance() {
+			return validatedOther, false
+		}
+		if _, ok := p.parseAnd(); !ok {
+			return validatedOther, false
+		}
+		kind = validatedOther
+	}
+	return kind, true
+}
+
+func (p *validationParser) parseAnd() (validatedExpressionKind, bool) {
+	kind, ok := p.parseWith()
+	if !ok {
+		return validatedOther, false
+	}
+	for p.current.typ == tokenAnd {
+		if !p.advance() {
+			return validatedOther, false
+		}
+		if _, ok := p.parseWith(); !ok {
+			return validatedOther, false
+		}
+		kind = validatedOther
+	}
+	return kind, true
+}
+
+func (p *validationParser) parseWith() (validatedExpressionKind, bool) {
+	kind, ok := p.parseAtom()
+	if !ok {
+		return validatedOther, false
+	}
+	if p.current.typ != tokenWith {
+		return kind, true
+	}
+	if kind != validatedLicense || !p.advance() || p.current.typ != tokenLicense ||
+		lookupException(p.current.value) == "" || !p.advance() {
+		return validatedOther, false
+	}
+	return validatedLicense, true
+}
+
+func (p *validationParser) parseAtom() (validatedExpressionKind, bool) {
+	switch p.current.typ {
+	case tokenOpenParen:
+		p.depth++
+		if p.depth > maxParseDepth || !p.advance() {
+			return validatedOther, false
+		}
+		kind, ok := p.parseExpression()
+		if !ok || p.current.typ != tokenCloseParen || !p.advance() {
+			return validatedOther, false
+		}
+		p.depth--
+		return kind, true
+
+	case tokenLicense:
+		value := p.current.value
+		if strings.EqualFold(value, "NONE") || strings.EqualFold(value, "NOASSERTION") {
+			return validatedOther, p.advance()
+		}
+		if lookupLicense(value) == "" || !p.advance() {
+			return validatedOther, false
+		}
+		if p.current.typ == tokenPlus && !p.advance() {
+			return validatedOther, false
+		}
+		return validatedLicense, true
+
+	case tokenLicenseRef:
+		if !validLicenseRefString(p.current.value) || !p.advance() {
+			return validatedOther, false
+		}
+		return validatedOther, true
+
+	case tokenDocumentRef:
+		if !validDocumentRefString(p.current.value) || !p.advance() {
+			return validatedOther, false
+		}
+		return validatedOther, true
+
+	default:
+		return validatedOther, false
+	}
+}
+
+func validLicenseRefString(reference string) bool {
+	return len(reference) > len("LicenseRef-") &&
+		hasPrefixFold(reference, "LicenseRef-") &&
+		validIdentifier(reference[len("LicenseRef-"):])
+}
+
+func validDocumentRefString(reference string) bool {
+	if len(reference) <= len("DocumentRef-") || !hasPrefixFold(reference, "DocumentRef-") {
+		return false
+	}
+	rest := reference[len("DocumentRef-"):]
+	separator := indexFoldASCII(rest, ":LicenseRef-", 0)
+	return separator > 0 &&
+		validIdentifier(rest[:separator]) &&
+		validIdentifier(rest[separator+len(":LicenseRef-"):])
 }
 
 func (p *parser) parse() (Expression, error) {
@@ -512,12 +685,14 @@ func (p *parser) parseAtom() (Expression, error) {
 
 func (p *parser) parseLicenseAtom() (Expression, error) {
 	value := p.current.value
-	upper := strings.ToUpper(value)
-	if upper == "NONE" || upper == "NOASSERTION" {
+	if strings.EqualFold(value, "NONE") || strings.EqualFold(value, "NOASSERTION") {
 		if err := p.advance(); err != nil {
 			return nil, err
 		}
-		return &SpecialValue{Value: upper}, nil
+		if strings.EqualFold(value, "NONE") {
+			return &SpecialValue{Value: "NONE"}, nil
+		}
+		return &SpecialValue{Value: "NOASSERTION"}, nil
 	}
 
 	id, err := p.resolveLicenseIdentifier(value)
@@ -609,8 +784,7 @@ func isIdentifierAlphanumeric(character rune) bool {
 // parseLicenseRef parses "LicenseRef-xxx" into a LicenseRef.
 func parseLicenseRef(s string) *LicenseRef {
 	// Remove "LicenseRef-" prefix (case insensitive)
-	upper := strings.ToUpper(s)
-	if strings.HasPrefix(upper, "LICENSEREF-") {
+	if hasPrefixFold(s, "LicenseRef-") {
 		return &LicenseRef{LicenseRef: s[11:]}
 	}
 	return &LicenseRef{LicenseRef: s}
@@ -619,10 +793,9 @@ func parseLicenseRef(s string) *LicenseRef {
 // parseDocumentRef parses "DocumentRef-xxx:LicenseRef-yyy" into a LicenseRef.
 func parseDocumentRef(s string) *LicenseRef {
 	// Format: DocumentRef-xxx:LicenseRef-yyy
-	upper := strings.ToUpper(s)
-	if strings.HasPrefix(upper, "DOCUMENTREF-") {
+	if hasPrefixFold(s, "DocumentRef-") {
 		rest := s[12:] // after "DocumentRef-"
-		if idx := strings.Index(strings.ToUpper(rest), ":LICENSEREF-"); idx != -1 {
+		if idx := indexFoldASCII(rest, ":LicenseRef-", 0); idx != -1 {
 			docRef := rest[:idx]
 			licRef := rest[idx+12:] // after ":LicenseRef-"
 			return &LicenseRef{DocumentRef: docRef, LicenseRef: licRef}

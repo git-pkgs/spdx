@@ -4,72 +4,146 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
+	"unicode/utf8"
 
 	"github.com/github/go-spdx/v2/spdxexp/spdxlicenses"
 )
 
 var (
-	initOnce      sync.Once
-	licenseMap    map[string]string // lowercase -> canonical
-	exceptionMap  map[string]string // lowercase -> canonical
-	deprecatedMap map[string]string // lowercase -> canonical
+	licenseMap            map[string]string // lowercase -> canonical
+	exceptionMap          map[string]string // lowercase -> canonical
+	canonicalLicenseMap   map[string]string // canonical -> canonical
+	canonicalExceptionMap map[string]string // canonical -> canonical
+	licenseFoldMap        map[uint64][]string
+	exceptionFoldMap      map[uint64][]string
 )
 
 func initMaps() {
-	initOnce.Do(func() {
-		licenses := spdxlicenses.GetLicenses()
-		deprecated := spdxlicenses.GetDeprecated()
-		exceptions := spdxlicenses.GetExceptions()
+	licenses := spdxlicenses.GetLicenses()
+	deprecated := spdxlicenses.GetDeprecated()
+	exceptions := spdxlicenses.GetExceptions()
 
-		licenseMap = make(map[string]string, len(licenses)+len(deprecated))
-		for _, id := range licenses {
-			licenseMap[strings.ToLower(id)] = id
+	licenseMap = make(map[string]string, len(licenses)+len(deprecated))
+	canonicalLicenseMap = make(map[string]string, len(licenses)+len(deprecated))
+	for _, id := range licenses {
+		licenseMap[strings.ToLower(id)] = id
+		canonicalLicenseMap[id] = id
+	}
+	for _, id := range deprecated {
+		lower := strings.ToLower(id)
+		if _, exists := licenseMap[lower]; !exists {
+			licenseMap[lower] = id
 		}
+		if _, exists := canonicalLicenseMap[id]; !exists {
+			canonicalLicenseMap[id] = id
+		}
+	}
 
-		deprecatedMap = make(map[string]string, len(deprecated))
-		for _, id := range deprecated {
-			lower := strings.ToLower(id)
-			deprecatedMap[lower] = id
-			if _, exists := licenseMap[lower]; !exists {
-				licenseMap[lower] = id
-			}
-		}
+	exceptionMap = make(map[string]string, len(exceptions))
+	canonicalExceptionMap = make(map[string]string, len(exceptions))
+	for _, id := range exceptions {
+		exceptionMap[strings.ToLower(id)] = id
+		canonicalExceptionMap[id] = id
+	}
 
-		exceptionMap = make(map[string]string, len(exceptions))
-		for _, id := range exceptions {
-			exceptionMap[strings.ToLower(id)] = id
-		}
-	})
+	licenseFoldMap = makeFoldMap(licenseMap)
+	exceptionFoldMap = makeFoldMap(exceptionMap)
 }
 
 // lookupLicense returns the canonical SPDX license ID for the given string,
 // or empty string if not found.
 func lookupLicense(s string) string {
-	initMaps()
-	return licenseMap[strings.ToLower(s)]
+	if id := canonicalLicenseMap[s]; id != "" {
+		return id
+	}
+	return lookupFolded(s, licenseMap, licenseFoldMap)
 }
 
 // lookupException returns the canonical SPDX exception ID for the given string,
 // or empty string if not found.
 func lookupException(s string) string {
-	initMaps()
-	return exceptionMap[strings.ToLower(s)]
+	if id := canonicalExceptionMap[s]; id != "" {
+		return id
+	}
+	return lookupFolded(s, exceptionMap, exceptionFoldMap)
 }
 
 // isValidLicenseOrException checks if the string is a valid license or exception.
 func isValidLicenseOrException(s string) bool {
-	initMaps()
-	lower := strings.ToLower(s)
-	_, isLicense := licenseMap[lower]
-	_, isException := exceptionMap[lower]
-	return isLicense || isException
+	return lookupLicense(s) != "" || lookupException(s) != ""
+}
+
+func makeFoldMap(source map[string]string) map[uint64][]string {
+	result := make(map[uint64][]string, len(source))
+	for _, canonical := range source {
+		hash := foldHash(canonical)
+		result[hash] = append(result[hash], canonical)
+	}
+	return result
+}
+
+func lookupFolded(s string, lowerMap map[string]string, foldMap map[uint64][]string) string {
+	if !isASCII(s) {
+		return lowerMap[strings.ToLower(s)]
+	}
+	for _, canonical := range foldMap[foldHash(s)] {
+		if strings.EqualFold(s, canonical) {
+			return canonical
+		}
+	}
+	return ""
+}
+
+func lookupLicenseWithSuffix(s, suffix string) string {
+	if !isASCII(s) {
+		return lookupLicense(s + suffix)
+	}
+	for _, canonical := range licenseFoldMap[foldHashParts(s, suffix)] {
+		if len(canonical) == len(s)+len(suffix) &&
+			strings.EqualFold(s, canonical[:len(s)]) &&
+			strings.EqualFold(suffix, canonical[len(s):]) {
+			return canonical
+		}
+	}
+	return ""
+}
+
+func foldHash(s string) uint64 {
+	return foldHashParts(s)
+}
+
+func foldHashParts(parts ...string) uint64 {
+	const (
+		offset64 = 14695981039346656037
+		prime64  = 1099511628211
+	)
+	hash := uint64(offset64)
+	for _, part := range parts {
+		for i := 0; i < len(part); i++ {
+			character := part[i]
+			if character >= 'A' && character <= 'Z' {
+				character += 'a' - 'A'
+			}
+			hash ^= uint64(character)
+			hash *= prime64
+		}
+	}
+	return hash
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // transposition represents a common misspelling or variation to correct.
 type transposition struct {
 	from      string
-	fromUpper string         // pre-computed uppercase
+	fromUpper string // pre-computed uppercase
 	to        string
 	re        *regexp.Regexp // pre-compiled case-insensitive regex
 }
@@ -138,12 +212,6 @@ var transpositions []transposition
 
 // Pre-compiled regular expressions for performance.
 var (
-	reWhitespace    = regexp.MustCompile(`\s+`)
-	reDigit         = regexp.MustCompile(`,?\s*(\d)`)
-	reDigitEnd      = regexp.MustCompile(`,?\s*(\d)$`)
-	reVersion       = regexp.MustCompile(`(?i),?\s*(V\.?|Version)\s*(\d)`)
-	reVersionEnd    = regexp.MustCompile(`(?i),?\s*(V\.?|Version)\s*(\d)$`)
-	reTrailingDigit = regexp.MustCompile(`(\d)$`)
 	reBSDNum        = regexp.MustCompile(`(?i)(-|\s)?(\d)$`)
 	reBSDClause     = regexp.MustCompile(`(?i)(-|\s)clause(-|\s)(\d)`)
 	reNewBSD        = regexp.MustCompile(`(?i)\b(Modified|New|Revised)(-|\s)?BSD((-|\s)License)?`)
@@ -159,41 +227,86 @@ var (
 type transform func(string) string
 
 var transforms = []transform{
-	// Uppercase
-	strings.ToUpper,
-	// Trim whitespace
-	strings.TrimSpace,
-	// Remove dots (M.I.T. -> MIT)
-	func(s string) string { return strings.ReplaceAll(s, ".", "") },
-	// Remove all whitespace (Apache- 2.0 -> Apache-2.0)
-	func(s string) string { return reWhitespace.ReplaceAllString(s, "") },
-	// Replace spaces with dashes (CC BY 4.0 -> CC-BY-4.0)
-	func(s string) string { return reWhitespace.ReplaceAllString(s, "-") },
-	// Replace v with dash (LGPLv2.1 -> LGPL-2.1)
-	func(s string) string { return strings.Replace(s, "v", "-", 1) },
-	// Apache 2.0 -> Apache-2.0
-	func(s string) string { return reDigit.ReplaceAllString(s, "-$1") },
-	// GPL 2 -> GPL-2.0
-	func(s string) string { return reDigitEnd.ReplaceAllString(s, "-$1.0") },
-	// Apache Version 2.0 -> Apache-2.0
-	func(s string) string { return reVersion.ReplaceAllString(s, "-$2") },
-	// Apache Version 2 -> Apache-2.0
-	func(s string) string { return reVersionEnd.ReplaceAllString(s, "-$2.0") },
-	// Capitalize first letter only (zlib -> Zlib)
+	// Preserve Unicode case-conversion behavior without allocating for SPDX's ASCII inputs.
 	func(s string) string {
-		if len(s) == 0 {
+		if isASCII(s) {
 			return s
 		}
-		return strings.ToUpper(s[:1]) + s[1:]
+		return strings.ToUpper(s)
+	},
+	// Remove dots (M.I.T. -> MIT)
+	func(s string) string {
+		if !strings.Contains(s, ".") {
+			return s
+		}
+		return strings.ReplaceAll(s, ".", "")
+	},
+	// Remove all whitespace (Apache- 2.0 -> Apache-2.0)
+	func(s string) string {
+		if !hasWhitespace(s) {
+			return s
+		}
+		return replaceWhitespace(s, "")
+	},
+	// Replace spaces with dashes (CC BY 4.0 -> CC-BY-4.0)
+	func(s string) string {
+		if !hasWhitespace(s) {
+			return s
+		}
+		return replaceWhitespace(s, "-")
+	},
+	// Replace v with dash (LGPLv2.1 -> LGPL-2.1)
+	func(s string) string {
+		if !strings.Contains(s, "v") {
+			return s
+		}
+		return strings.Replace(s, "v", "-", 1)
+	},
+	// Apache 2.0 -> Apache-2.0
+	func(s string) string {
+		if !hasDigit(s) {
+			return s
+		}
+		return replaceSeparatedDigits(s, false)
+	},
+	// GPL 2 -> GPL-2.0
+	func(s string) string {
+		if !hasDigit(s) {
+			return s
+		}
+		return replaceSeparatedDigits(s, true)
+	},
+	// Apache Version 2.0 -> Apache-2.0
+	func(s string) string {
+		if !hasVersionWord(s) {
+			return s
+		}
+		return replaceVersion(s, false)
+	},
+	// Apache Version 2 -> Apache-2.0
+	func(s string) string {
+		if !hasVersionWord(s) {
+			return s
+		}
+		return replaceVersion(s, true)
 	},
 	// Replace / with - (MPL/2.0 -> MPL-2.0)
-	func(s string) string { return strings.ReplaceAll(s, "/", "-") },
+	func(s string) string {
+		if !strings.Contains(s, "/") {
+			return s
+		}
+		return strings.ReplaceAll(s, "/", "-")
+	},
 	// GPL-2.0, GPL-3.0 -> add -only or -or-later
 	func(s string) string {
+		suffix := "-only"
 		if strings.Contains(s, "3.0") {
-			return s + "-or-later"
+			suffix = "-or-later"
 		}
-		return s + "-only"
+		if canonical := lookupLicenseWithSuffix(s, suffix); canonical != "" {
+			return canonical
+		}
+		return s
 	},
 	// GPL-2.0- -> GPL-2.0-only
 	func(s string) string {
@@ -203,18 +316,45 @@ var transforms = []transform{
 		return s
 	},
 	// GPL2 -> GPL-2.0
-	func(s string) string { return reTrailingDigit.ReplaceAllString(s, "-$1.0") },
+	func(s string) string {
+		if len(s) == 0 || s[len(s)-1] < '0' || s[len(s)-1] > '9' {
+			return s
+		}
+		return s[:len(s)-1] + "-" + s[len(s)-1:] + ".0"
+	},
 	// BSD 3 -> BSD-3-Clause
-	func(s string) string { return reBSDNum.ReplaceAllString(s, "-$2-Clause") },
+	func(s string) string {
+		if !containsFold(s, "BSD") || len(s) == 0 || s[len(s)-1] < '0' || s[len(s)-1] > '9' {
+			return s
+		}
+		return reBSDNum.ReplaceAllString(s, "-$2-Clause")
+	},
 	// BSD clause 3 -> BSD-3-Clause
-	func(s string) string { return reBSDClause.ReplaceAllString(s, "-$3-Clause") },
+	func(s string) string {
+		if !containsFold(s, "BSD") || !containsFold(s, "clause") {
+			return s
+		}
+		return reBSDClause.ReplaceAllString(s, "-$3-Clause")
+	},
 	// New BSD -> BSD-3-Clause
-	func(s string) string { return reNewBSD.ReplaceAllString(s, "BSD-3-Clause") },
+	func(s string) string {
+		if !containsFold(s, "BSD") ||
+			(!containsFold(s, "Modified") && !containsFold(s, "New") && !containsFold(s, "Revised")) {
+			return s
+		}
+		return reNewBSD.ReplaceAllString(s, "BSD-3-Clause")
+	},
 	// Simplified BSD -> BSD-2-Clause
-	func(s string) string { return reSimplifiedBSD.ReplaceAllString(s, "BSD-2-Clause") },
+	func(s string) string {
+		if !containsFold(s, "BSD") || !containsFold(s, "Simplified") {
+			return s
+		}
+		return reSimplifiedBSD.ReplaceAllString(s, "BSD-2-Clause")
+	},
 	// Free BSD -> BSD-2-Clause-FreeBSD
 	func(s string) string {
-		if reFreeNetBSD.MatchString(s) {
+		if containsFold(s, "BSD") && (containsFold(s, "Free") || containsFold(s, "Net")) &&
+			reFreeNetBSD.MatchString(s) {
 			match := reFreeNetBSD.FindStringSubmatch(s)
 			if len(match) > 1 {
 				variant := strings.ToUpper(match[1][:1]) + strings.ToLower(match[1][1:])
@@ -224,18 +364,35 @@ var transforms = []transform{
 		return s
 	},
 	// Clear BSD -> BSD-3-Clause-Clear
-	func(s string) string { return reClearBSD.ReplaceAllString(s, "BSD-3-Clause-Clear") },
+	func(s string) string {
+		if !containsFold(s, "BSD") || !containsFold(s, "Clear") {
+			return s
+		}
+		return reClearBSD.ReplaceAllString(s, "BSD-3-Clause-Clear")
+	},
 	// Old BSD -> BSD-4-Clause
-	func(s string) string { return reOldBSD.ReplaceAllString(s, "BSD-4-Clause") },
+	func(s string) string {
+		if !containsFold(s, "BSD") ||
+			(!containsFold(s, "Old") && !containsFold(s, "Original")) {
+			return s
+		}
+		return reOldBSD.ReplaceAllString(s, "BSD-4-Clause")
+	},
 	// BY-NC-4.0 -> CC-BY-NC-4.0
 	func(s string) string {
-		if strings.HasPrefix(strings.ToUpper(s), "BY-") {
+		if hasPrefixFold(s, "BY-") {
 			return "CC-" + s
 		}
 		return s
 	},
 	// Attribution-NonCommercial -> CC-BY-NC-4.0
 	func(s string) string {
+		if !strings.Contains(s, "Attribution") &&
+			!strings.Contains(s, "NonCommercial") &&
+			!strings.Contains(s, "NoDerivatives") &&
+			!strings.Contains(s, "ShareAlike") {
+			return s
+		}
 		result := s
 		result = strings.ReplaceAll(result, "Attribution", "BY")
 		result = strings.ReplaceAll(result, "NonCommercial", "NC")
@@ -251,6 +408,156 @@ var transforms = []transform{
 		}
 		return result
 	},
+}
+
+func hasWhitespace(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r', '\v', '\f':
+			return true
+		}
+	}
+	return false
+}
+
+func replaceWhitespace(s, replacement string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	start := 0
+	for i := 0; i < len(s); {
+		if !isRegexpSpace(s[i]) {
+			i++
+			continue
+		}
+		result.WriteString(s[start:i])
+		result.WriteString(replacement)
+		for i < len(s) && isRegexpSpace(s[i]) {
+			i++
+		}
+		start = i
+	}
+	result.WriteString(s[start:])
+	return result.String()
+}
+
+func isRegexpSpace(character byte) bool {
+	switch character {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
+	}
+}
+
+func replaceSeparatedDigits(s string, atEnd bool) string {
+	if atEnd {
+		if len(s) == 0 || s[len(s)-1] < '0' || s[len(s)-1] > '9' {
+			return s
+		}
+		start := len(s) - 1
+		for start > 0 && isRegexpSpace(s[start-1]) {
+			start--
+		}
+		if start > 0 && s[start-1] == ',' {
+			start--
+		}
+		return s[:start] + "-" + s[len(s)-1:] + ".0"
+	}
+
+	var result strings.Builder
+	result.Grow(len(s) + 1)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			continue
+		}
+		matchStart := i
+		for matchStart > start && isRegexpSpace(s[matchStart-1]) {
+			matchStart--
+		}
+		if matchStart > start && s[matchStart-1] == ',' {
+			matchStart--
+		}
+		result.WriteString(s[start:matchStart])
+		result.WriteByte('-')
+		result.WriteByte(s[i])
+		start = i + 1
+	}
+	result.WriteString(s[start:])
+	return result.String()
+}
+
+func replaceVersion(s string, atEnd bool) string {
+	var result strings.Builder
+	result.Grow(len(s) + len(".0"))
+	written := 0
+	searchFrom := 0
+	for {
+		start, end, digit, ok := findVersion(s, searchFrom, atEnd)
+		if !ok {
+			if written == 0 {
+				return s
+			}
+			result.WriteString(s[written:])
+			return result.String()
+		}
+		result.WriteString(s[written:start])
+		result.WriteByte('-')
+		result.WriteByte(digit)
+		if atEnd {
+			result.WriteString(".0")
+		}
+		written = end
+		searchFrom = end
+	}
+}
+
+func findVersion(s string, searchFrom int, atEnd bool) (int, int, byte, bool) {
+	for i := searchFrom; i < len(s); i++ {
+		var tokenEnd int
+		switch {
+		case hasPrefixFold(s[i:], "Version"):
+			tokenEnd = i + len("Version")
+		case s[i] == 'v' || s[i] == 'V':
+			tokenEnd = i + 1
+			if tokenEnd < len(s) && s[tokenEnd] == '.' {
+				tokenEnd++
+			}
+		default:
+			continue
+		}
+
+		digit := tokenEnd
+		for digit < len(s) && isRegexpSpace(s[digit]) {
+			digit++
+		}
+		if digit >= len(s) || s[digit] < '0' || s[digit] > '9' || atEnd && digit != len(s)-1 {
+			continue
+		}
+
+		start := i
+		for start > searchFrom && isRegexpSpace(s[start-1]) {
+			start--
+		}
+		if start > searchFrom && s[start-1] == ',' {
+			start--
+		}
+		return start, digit + 1, s[digit], true
+	}
+	return 0, 0, 0, false
+}
+
+func hasDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVersionWord(s string) bool {
+	return containsFold(s, "v") || containsFold(s, "version")
 }
 
 // lastResort maps substrings to their canonical license identifiers.
@@ -360,6 +667,8 @@ var lastResorts = []lastResort{
 }
 
 func init() {
+	initMaps()
+
 	// Build transpositions from data with pre-computed fields
 	transpositions = make([]transposition, len(transpositionData))
 	for i, d := range transpositionData {
@@ -398,15 +707,19 @@ func tryTransforms(s string) string {
 
 	for _, t := range transforms {
 		transformed := strings.TrimSpace(t(s))
-		if transformed != s && lookupLicense(transformed) != "" {
-			return upgradeGPL(lookupLicense(transformed))
+		if transformed != s {
+			if id := lookupLicense(transformed); id != "" {
+				return upgradeGPL(id)
+			}
 		}
 
 		// Also try transform on base (without +) and add + back
 		if hasPlus {
 			transformedBase := strings.TrimSpace(t(base))
-			if transformedBase != base && lookupLicense(transformedBase) != "" {
-				return upgradeGPL(lookupLicense(transformedBase) + "+")
+			if transformedBase != base {
+				if id := lookupLicense(transformedBase); id != "" {
+					return upgradeGPL(id + "+")
+				}
 			}
 		}
 	}
@@ -415,14 +728,9 @@ func tryTransforms(s string) string {
 
 // tryTranspositions applies transpositions and then transforms.
 func tryTranspositions(s string) string {
-	sUpper := strings.ToUpper(s) // compute once
 	for _, trans := range transpositions {
-		if strings.Contains(s, trans.from) || strings.Contains(sUpper, trans.fromUpper) {
-			corrected := strings.ReplaceAll(s, trans.from, trans.to)
-			// Also try case-insensitive replacement using pre-compiled regex
-			if corrected == s {
-				corrected = trans.re.ReplaceAllString(s, trans.to)
-			}
+		if containsFold(s, trans.fromUpper) {
+			corrected := replaceAllFold(s, trans.from, trans.to, trans.re)
 
 			// Check if directly valid
 			if id := lookupLicense(corrected); id != "" {
@@ -440,9 +748,8 @@ func tryTranspositions(s string) string {
 
 // tryLastResorts uses substring matching as a fallback.
 func tryLastResorts(s string) string {
-	upper := strings.ToUpper(s)
 	for _, lr := range lastResorts {
-		if strings.Contains(upper, lr.substring) {
+		if containsFold(s, lr.substring) {
 			return upgradeGPL(lr.license)
 		}
 	}
@@ -451,13 +758,9 @@ func tryLastResorts(s string) string {
 
 // tryTranspositionsWithLastResorts applies transpositions then last resorts.
 func tryTranspositionsWithLastResorts(s string) string {
-	sUpper := strings.ToUpper(s) // compute once
 	for _, trans := range transpositions {
-		if strings.Contains(s, trans.from) || strings.Contains(sUpper, trans.fromUpper) {
-			corrected := strings.ReplaceAll(s, trans.from, trans.to)
-			if corrected == s {
-				corrected = trans.re.ReplaceAllString(s, trans.to)
-			}
+		if containsFold(s, trans.fromUpper) {
+			corrected := replaceAllFold(s, trans.from, trans.to, trans.re)
 
 			if result := tryLastResorts(corrected); result != "" {
 				return result
@@ -465,6 +768,81 @@ func tryTranspositionsWithLastResorts(s string) string {
 		}
 	}
 	return ""
+}
+
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+func containsFold(s, substring string) bool {
+	if substring == "" {
+		return true
+	}
+	if !isASCII(s) {
+		return strings.Contains(strings.ToUpper(s), strings.ToUpper(substring))
+	}
+	return indexFoldASCII(s, substring, 0) >= 0
+}
+
+func indexFoldASCII(s, substring string, start int) int {
+	limit := len(s) - len(substring)
+	for i := start; i <= limit; i++ {
+		matched := true
+		for j := 0; j < len(substring); j++ {
+			left := s[i+j]
+			right := substring[j]
+			if left >= 'a' && left <= 'z' {
+				left -= 'a' - 'A'
+			}
+			if right >= 'a' && right <= 'z' {
+				right -= 'a' - 'A'
+			}
+			if left != right {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return i
+		}
+	}
+	return -1
+}
+
+func replaceAllFold(s, old, replacement string, fallback *regexp.Regexp) string {
+	if !isASCII(s) {
+		return fallback.ReplaceAllString(s, replacement)
+	}
+
+	searchFrom := 0
+	firstChange := -1
+	for {
+		match := indexFoldASCII(s, old, searchFrom)
+		if match < 0 {
+			return s
+		}
+		if len(old) != len(replacement) || s[match:match+len(old)] != replacement {
+			firstChange = match
+			break
+		}
+		searchFrom = match + len(old)
+	}
+
+	var result strings.Builder
+	result.Grow(len(s) + len(replacement) - len(old))
+	result.WriteString(s[:firstChange])
+	searchFrom = firstChange
+	for {
+		match := indexFoldASCII(s, old, searchFrom)
+		if match < 0 {
+			result.WriteString(s[searchFrom:])
+			break
+		}
+		result.WriteString(s[searchFrom:match])
+		result.WriteString(replacement)
+		searchFrom = match + len(old)
+	}
+	return result.String()
 }
 
 // upgradeGPL converts deprecated GPL/LGPL/AGPL identifiers to their modern equivalents.

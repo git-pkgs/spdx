@@ -28,52 +28,67 @@ func normalizeExpressionString(expr string) (string, error) {
 
 // tokenForNorm represents a token during normalization.
 type tokenForNorm struct {
-	value    string
-	isOp     bool // AND, OR, WITH
-	isParen  bool // ( or )
-	isPlus   bool // +
+	value   string
+	isOp    bool // AND, OR, WITH
+	isParen bool // ( or )
+	isPlus  bool // +
 }
 
 // tokenizeForNormalization splits the expression into tokens, identifying operators and parens.
 func tokenizeForNormalization(expr string) []tokenForNorm {
-	var tokens []tokenForNorm
-	var current strings.Builder
+	tokens := make([]tokenForNorm, 0, strings.Count(expr, " ")+1)
+	wordStart := -1
 
-	flush := func() {
-		if current.Len() > 0 {
-			word := current.String()
-			upper := strings.ToUpper(word)
-			switch upper {
-			case opAND, opOR, opWITH:
-				tokens = append(tokens, tokenForNorm{value: upper, isOp: true})
-			default:
-				tokens = append(tokens, tokenForNorm{value: word})
-			}
-			current.Reset()
+	flush := func(end int) {
+		if wordStart < 0 {
+			return
 		}
+		word := expr[wordStart:end]
+		switch {
+		case strings.EqualFold(word, opAND):
+			tokens = append(tokens, tokenForNorm{value: opAND, isOp: true})
+		case strings.EqualFold(word, opOR):
+			tokens = append(tokens, tokenForNorm{value: opOR, isOp: true})
+		case strings.EqualFold(word, opWITH):
+			tokens = append(tokens, tokenForNorm{value: opWITH, isOp: true})
+		default:
+			tokens = append(tokens, tokenForNorm{value: word})
+		}
+		wordStart = -1
 	}
 
 	for i := 0; i < len(expr); i++ {
 		ch := expr[i]
 		switch {
 		case ch == '(':
-			flush()
+			flush(i)
 			tokens = append(tokens, tokenForNorm{value: "(", isParen: true})
 		case ch == ')':
-			flush()
+			flush(i)
 			tokens = append(tokens, tokenForNorm{value: ")", isParen: true})
 		case ch == '+':
-			flush()
+			flush(i)
 			tokens = append(tokens, tokenForNorm{value: "+", isPlus: true})
-		case unicode.IsSpace(rune(ch)):
-			flush()
+		case isSpaceByte(ch):
+			flush(i)
 		default:
-			current.WriteByte(ch)
+			if wordStart < 0 {
+				wordStart = i
+			}
 		}
 	}
-	flush()
+	flush(len(expr))
 
 	return tokens
+}
+
+func isSpaceByte(character byte) bool {
+	switch character {
+	case ' ', '\t', '\n', '\r', '\v', '\f':
+		return true
+	default:
+		return unicode.IsSpace(rune(character))
+	}
 }
 
 // tokenNormalizer holds state for normalizing a stream of tokens.
@@ -115,16 +130,18 @@ func (n *tokenNormalizer) flushException() error {
 
 	// Exception should be a single valid exception ID
 	exc := strings.Join(n.licenseWords, "-")
-	if lookupException(exc) == "" {
+	canonical := lookupException(exc)
+	if canonical == "" {
 		// Try the original form
 		exc = strings.Join(n.licenseWords, " ")
-		if lookupException(exc) == "" {
+		canonical = lookupException(exc)
+		if canonical == "" {
 			return &LicenseError{License: exc, Err: ErrInvalidException}
 		}
 	}
 
 	n.result.WriteString(" ")
-	n.result.WriteString(lookupException(exc))
+	n.result.WriteString(canonical)
 	n.licenseWords = nil
 	return nil
 }
@@ -202,18 +219,29 @@ func normalizeLicenseWords(words []string) (string, error) {
 
 	// Check for special values, LicenseRef or DocumentRef first
 	if len(words) == 1 {
-		upper := strings.ToUpper(words[0])
 		// Pass through special values
-		if upper == "NONE" || upper == "NOASSERTION" {
-			return upper, nil
+		if strings.EqualFold(words[0], "NONE") {
+			return "NONE", nil
 		}
-		if strings.HasPrefix(upper, "LICENSEREF-") || strings.HasPrefix(upper, "DOCUMENTREF-") {
+		if strings.EqualFold(words[0], "NOASSERTION") {
+			return "NOASSERTION", nil
+		}
+		if hasPrefixFold(words[0], "LicenseRef-") || hasPrefixFold(words[0], "DocumentRef-") {
 			return words[0], nil
 		}
 	}
 
-	// Try to match progressively longer spans from the start
-	var results []string
+	joined := strings.Join(words, " ")
+	var starts [maxLicenseWords]int
+	offset := 0
+	for i, word := range words {
+		starts[i] = offset
+		offset += len(word) + 1
+	}
+
+	// Try to match progressively longer spans from the start.
+	var result strings.Builder
+	var firstResult string
 	i := 0
 
 	for i < len(words) {
@@ -221,12 +249,13 @@ func normalizeLicenseWords(words []string) (string, error) {
 
 		// Try longest span first, working backwards
 		for end := len(words); end > i; end-- {
-			candidate := strings.Join(words[i:end], " ")
+			candidateEnd := starts[end-1] + len(words[end-1])
+			candidate := joined[starts[i]:candidateEnd]
 
 			// Try direct normalization
 			normalized, err := Normalize(candidate)
 			if err == nil {
-				results = append(results, normalized)
+				firstResult = appendNormalizedResult(&result, firstResult, normalized)
 				i = end
 				matched = true
 				break
@@ -237,7 +266,11 @@ func normalizeLicenseWords(words []string) (string, error) {
 				base := strings.TrimSuffix(candidate, "+")
 				normalized, err := Normalize(base)
 				if err == nil {
-					results = append(results, upgradeGPL(normalized+"+"))
+					firstResult = appendNormalizedResult(
+						&result,
+						firstResult,
+						upgradeGPL(normalized+"+"),
+					)
 					i = end
 					matched = true
 					break
@@ -251,7 +284,23 @@ func normalizeLicenseWords(words []string) (string, error) {
 		}
 	}
 
-	return strings.Join(results, " "), nil
+	if result.Len() == 0 {
+		return firstResult, nil
+	}
+	return result.String(), nil
+}
+
+func appendNormalizedResult(result *strings.Builder, first, normalized string) string {
+	if first == "" {
+		return normalized
+	}
+	if result.Len() == 0 {
+		result.Grow(len(first) + len(normalized) + 1)
+		result.WriteString(first)
+	}
+	result.WriteByte(' ')
+	result.WriteString(normalized)
+	return first
 }
 
 // LicenseError wraps an error with the license that caused it.
