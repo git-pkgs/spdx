@@ -45,3 +45,15 @@ func TestCanonicalFastPathsDoNotAllocate(t *testing.T) {
 		t.Errorf("Valid canonical expression allocations = %v, want 0", allocations)
 	}
 }
+
+func TestNormalizePreservesPlusAfterTransposition(t *testing.T) {
+	const input = "The Apache License, Version 2.0+"
+
+	normalized, err := Normalize(input)
+	if err != nil {
+		t.Fatalf("Normalize(%q): %v", input, err)
+	}
+	if normalized != "Apache-2.0+" {
+		t.Errorf("Normalize(%q) = %q, want %q", input, normalized, "Apache-2.0+")
+	}
+}

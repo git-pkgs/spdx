@@ -704,6 +704,14 @@ func tryTransforms(s string) string {
 	// Check if input has trailing +
 	hasPlus := strings.HasSuffix(s, "+")
 	base := strings.TrimSuffix(s, "+")
+	if hasPlus && hasASCIILower(base) {
+		// The former uppercase transform changed mixed-case canonical IDs, which
+		// caused the base lookup below to preserve the suffix. Keep that behavior
+		// without allocating an uppercase copy.
+		if id := lookupLicense(base); id != "" {
+			return upgradeGPL(id + "+")
+		}
+	}
 
 	for _, t := range transforms {
 		transformed := strings.TrimSpace(t(s))
@@ -724,6 +732,15 @@ func tryTransforms(s string) string {
 		}
 	}
 	return ""
+}
+
+func hasASCIILower(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'a' && s[i] <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 // tryTranspositions applies transpositions and then transforms.
