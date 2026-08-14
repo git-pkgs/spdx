@@ -46,6 +46,29 @@ func TestCanonicalFastPathsDoNotAllocate(t *testing.T) {
 	}
 }
 
+func TestWhitespaceHelpersMatchRegexpSpace(t *testing.T) {
+	testCases := []struct {
+		character byte
+		matches   bool
+	}{
+		{character: ' ', matches: true},
+		{character: '\t', matches: true},
+		{character: '\n', matches: true},
+		{character: '\r', matches: true},
+		{character: '\f', matches: true},
+		{character: '\v', matches: false},
+	}
+
+	for _, testCase := range testCases {
+		if got := hasWhitespace(string(testCase.character)); got != testCase.matches {
+			t.Errorf("hasWhitespace(%q) = %t, want %t", testCase.character, got, testCase.matches)
+		}
+		if got := isRegexpSpace(testCase.character); got != testCase.matches {
+			t.Errorf("isRegexpSpace(%q) = %t, want %t", testCase.character, got, testCase.matches)
+		}
+	}
+}
+
 func TestNormalizePreservesPlusAfterTransposition(t *testing.T) {
 	const input = "The Apache License, Version 2.0+"
 

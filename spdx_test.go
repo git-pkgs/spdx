@@ -141,6 +141,13 @@ var normalizeTestCases = map[string]string{
 	"Old BSD":                                      "BSD-4-Clause",
 	"Clear BSD License":                            "BSD-3-Clause-Clear",
 
+	// Other clause licenses
+	"Brian-Gladman 2":                              "Brian-Gladman-2-Clause",
+	"Brian-Gladman clause 3":                       "Brian-Gladman-3-Clause",
+	"DEC 3":                                        "DEC-3-Clause",
+	"DEC clause 3":                                 "DEC-3-Clause",
+	"Mackerras-3":                                  "Mackerras-3-Clause",
+
 	// MPL variations
 	"MPL":                                          "MPL-2.0",
 	"MPL 2":                                        "MPL-2.0",
@@ -507,6 +514,7 @@ func TestParseNormalizesInformalLicenses(t *testing.T) {
 		"MIT License":     "MIT",
 		"GPL v3":          "GPL-3.0-or-later",
 		"BSD 3-Clause":    "BSD-3-Clause",
+		"DEC 3":           "DEC-3-Clause",
 
 		// Expressions with informal licenses
 		"Apache 2 OR MIT":              "Apache-2.0 OR MIT",
@@ -514,6 +522,7 @@ func TestParseNormalizesInformalLicenses(t *testing.T) {
 		"GPL v3 AND BSD":               "GPL-3.0-or-later AND BSD-2-Clause",
 		"Apache 2 OR MIT License":      "Apache-2.0 OR MIT",
 		"(Apache 2 OR MIT) AND GPL v3": "(Apache-2.0 OR MIT) AND GPL-3.0-or-later",
+		"DEC 3 OR MIT":                 "DEC-3-Clause OR MIT",
 
 		// Mixed strict and informal
 		"MIT OR Apache 2":       "MIT OR Apache-2.0",

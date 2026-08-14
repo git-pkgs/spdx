@@ -212,7 +212,6 @@ var transpositions []transposition
 
 // Pre-compiled regular expressions for performance.
 var (
-	reBSDNum        = regexp.MustCompile(`(?i)(-|\s)?(\d)$`)
 	reBSDClause     = regexp.MustCompile(`(?i)(-|\s)clause(-|\s)(\d)`)
 	reNewBSD        = regexp.MustCompile(`(?i)\b(Modified|New|Revised)(-|\s)?BSD((-|\s)License)?`)
 	reSimplifiedBSD = regexp.MustCompile(`(?i)\bSimplified(-|\s)?BSD((-|\s)License)?`)
@@ -323,15 +322,10 @@ var transforms = []transform{
 		return s[:len(s)-1] + "-" + s[len(s)-1:] + ".0"
 	},
 	// BSD 3 -> BSD-3-Clause
-	func(s string) string {
-		if !containsFold(s, "BSD") || len(s) == 0 || s[len(s)-1] < '0' || s[len(s)-1] > '9' {
-			return s
-		}
-		return reBSDNum.ReplaceAllString(s, "-$2-Clause")
-	},
+	normalizeNumberedClause,
 	// BSD clause 3 -> BSD-3-Clause
 	func(s string) string {
-		if !containsFold(s, "BSD") || !containsFold(s, "clause") {
+		if !containsFold(s, "clause") {
 			return s
 		}
 		return reBSDClause.ReplaceAllString(s, "-$3-Clause")
@@ -410,10 +404,39 @@ var transforms = []transform{
 	},
 }
 
+var clauseSuffixes = [...]string{
+	"-0-Clause",
+	"-1-Clause",
+	"-2-Clause",
+	"-3-Clause",
+	"-4-Clause",
+	"-5-Clause",
+	"-6-Clause",
+	"-7-Clause",
+	"-8-Clause",
+	"-9-Clause",
+}
+
+func normalizeNumberedClause(s string) string {
+	if len(s) == 0 || s[len(s)-1] < '0' || s[len(s)-1] > '9' {
+		return s
+	}
+
+	prefixEnd := len(s) - 1
+	if prefixEnd > 0 && (s[prefixEnd-1] == '-' || isRegexpSpace(s[prefixEnd-1])) {
+		prefixEnd--
+	}
+	suffix := clauseSuffixes[s[len(s)-1]-'0']
+	if canonical := lookupLicenseWithSuffix(s[:prefixEnd], suffix); canonical != "" {
+		return canonical
+	}
+	return s
+}
+
 func hasWhitespace(s string) bool {
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
-		case ' ', '\t', '\n', '\r', '\v', '\f':
+		case ' ', '\t', '\n', '\r', '\f':
 			return true
 		}
 	}
