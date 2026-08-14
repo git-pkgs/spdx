@@ -108,8 +108,7 @@ func NormalizeExpressionLax(expression string) (string, error) {
 // This performs strict validation - informal license names like "Apache 2" are not valid.
 // Returns true if valid, false otherwise.
 func Valid(expression string) bool {
-	_, err := ParseStrict(expression)
-	return err == nil
+	return validStrictExpression(expression)
 }
 
 // ValidLicense checks if the given string is a valid SPDX license identifier.
