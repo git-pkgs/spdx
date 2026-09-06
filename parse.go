@@ -13,7 +13,7 @@ type Expression interface {
 	String() string
 	// Licenses returns all license identifiers in the expression.
 	Licenses() []string
-	rewriteIdentifiers(func(string) string) Expression
+	writeRewritten(*strings.Builder, func(string) string, tokenType)
 	isExpr()
 }
 
