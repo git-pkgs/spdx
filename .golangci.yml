@@ -2,6 +2,11 @@ version: "2"
 linters:
   disable:
     - unused
+  exclusions:
+    rules:
+      - path: normalize.go
+        linters:
+          - goconst
   settings:
     goconst:
       ignore-tests: true

@@ -13,16 +13,16 @@ func TestLicenseCategory(t *testing.T) {
 		"ISC":          CategoryPermissive,
 
 		// Copyleft
-		"GPL-2.0-only":    CategoryCopyleft,
-		"GPL-3.0-only":    CategoryCopyleft,
+		"GPL-2.0-only":     CategoryCopyleft,
+		"GPL-3.0-only":     CategoryCopyleft,
 		"GPL-3.0-or-later": CategoryCopyleft,
-		"AGPL-3.0-only":   CategoryCopyleft,
+		"AGPL-3.0-only":    CategoryCopyleft,
 
 		// Copyleft Limited (weak copyleft)
-		"LGPL-2.1-only":   CategoryCopyleftLimited,
-		"LGPL-3.0-only":   CategoryCopyleftLimited,
-		"MPL-2.0":         CategoryCopyleftLimited,
-		"EPL-2.0":         CategoryCopyleftLimited,
+		"LGPL-2.1-only": CategoryCopyleftLimited,
+		"LGPL-3.0-only": CategoryCopyleftLimited,
+		"MPL-2.0":       CategoryCopyleftLimited,
+		"EPL-2.0":       CategoryCopyleftLimited,
 
 		// Public Domain
 		"Unlicense": CategoryPublicDomain,
@@ -139,14 +139,14 @@ func TestGetLicenseInfo(t *testing.T) {
 
 func TestHasCopyleft(t *testing.T) {
 	tests := map[string]bool{
-		"MIT":                      false,
-		"MIT OR Apache-2.0":        false,
-		"MIT AND BSD-3-Clause":     false,
-		"GPL-3.0-only":             true,
-		"MIT OR GPL-3.0-only":      true,
-		"MIT AND LGPL-2.1-only":    true,
-		"Apache-2.0 OR MPL-2.0":    true,  // MPL is weak copyleft
-		"Unlicense OR CC0-1.0":     false, // public domain
+		"MIT":                   false,
+		"MIT OR Apache-2.0":     false,
+		"MIT AND BSD-3-Clause":  false,
+		"GPL-3.0-only":          true,
+		"MIT OR GPL-3.0-only":   true,
+		"MIT AND LGPL-2.1-only": true,
+		"Apache-2.0 OR MPL-2.0": true,  // MPL is weak copyleft
+		"Unlicense OR CC0-1.0":  false, // public domain
 	}
 
 	for expr, expected := range tests {
@@ -161,15 +161,15 @@ func TestHasCopyleft(t *testing.T) {
 
 func TestIsFullyPermissive(t *testing.T) {
 	tests := map[string]bool{
-		"MIT":                      true,
-		"MIT OR Apache-2.0":        true,
-		"MIT AND BSD-3-Clause":     true,
-		"Unlicense OR CC0-1.0":     true,  // public domain counts as permissive
-		"MIT OR Unlicense":         true,
-		"GPL-3.0-only":             false,
-		"MIT OR GPL-3.0-only":      false,
-		"MIT AND LGPL-2.1-only":    false,
-		"Apache-2.0 OR MPL-2.0":    false, // MPL is copyleft limited
+		"MIT":                   true,
+		"MIT OR Apache-2.0":     true,
+		"MIT AND BSD-3-Clause":  true,
+		"Unlicense OR CC0-1.0":  true, // public domain counts as permissive
+		"MIT OR Unlicense":      true,
+		"GPL-3.0-only":          false,
+		"MIT OR GPL-3.0-only":   false,
+		"MIT AND LGPL-2.1-only": false,
+		"Apache-2.0 OR MPL-2.0": false, // MPL is copyleft limited
 	}
 
 	for expr, expected := range tests {

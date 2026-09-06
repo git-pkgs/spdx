@@ -30,12 +30,12 @@ const (
 
 // licenseEntry represents a license in the scancode database.
 type licenseEntry struct {
-	LicenseKey          string   `json:"license_key"`
-	Category            string   `json:"category"`
-	SPDXLicenseKey      string   `json:"spdx_license_key"`
-	OtherSPDXKeys       []string `json:"other_spdx_license_keys"`
-	IsException         bool     `json:"is_exception"`
-	IsDeprecated        bool     `json:"is_deprecated"`
+	LicenseKey     string   `json:"license_key"`
+	Category       string   `json:"category"`
+	SPDXLicenseKey string   `json:"spdx_license_key"`
+	OtherSPDXKeys  []string `json:"other_spdx_license_keys"`
+	IsException    bool     `json:"is_exception"`
+	IsDeprecated   bool     `json:"is_deprecated"`
 }
 
 var (
