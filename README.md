@@ -205,4 +205,4 @@ This library combines approaches from several existing implementations:
 
 ## License
 
-MIT
+[MIT](LICENSE).
