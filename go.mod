@@ -4,4 +4,4 @@ go 1.26
 
 toolchain go1.26.7
 
-require github.com/github/go-spdx/v2 v2.7.1
+require github.com/github/go-spdx/v2 v2.8.0
