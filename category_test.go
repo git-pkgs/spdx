@@ -27,6 +27,15 @@ func TestLicenseCategory(t *testing.T) {
 		// Public Domain
 		"Unlicense": CategoryPublicDomain,
 		"CC0-1.0":   CategoryPublicDomain,
+
+		// SPDX identifiers take precedence over ScanCode keys
+		"BSL-1.0":                     CategoryPermissive,
+		"bsl-1.0":                     CategoryPermissive,
+		"LicenseRef-scancode-bsl-1.0": CategorySourceAvailable,
+
+		"LicenseRef-scancode-3dslicer-1.0":               CategoryPermissive,
+		"LicenseRef-scancode-acki-nacki-node-2024-10-04": CategoryCommercial,
+		"LicenseRef-scancode-acm-sla":                    CategoryNonCommercial,
 	}
 
 	for license, expected := range tests {
@@ -134,6 +143,20 @@ func TestGetLicenseInfo(t *testing.T) {
 	}
 	if !info.IsException {
 		t.Error("GetLicenseInfo(\"Classpath-exception-2.0\").IsException = false, want true")
+	}
+
+	info = GetLicenseInfo("LicenseRef-scancode-3dslicer-1.0")
+	if info == nil || info.SPDXKey != "3D-Slicer-1.0" {
+		t.Errorf("GetLicenseInfo(alternate key) = %+v, want SPDXKey 3D-Slicer-1.0", info)
+	}
+
+	info = GetLicenseInfo("BSL-1.0")
+	if info == nil || info.Key != "boost-1.0" {
+		t.Errorf("GetLicenseInfo(\"BSL-1.0\") = %+v, want Key boost-1.0", info)
+	}
+
+	if !IsCommercial("LicenseRef-scancode-acki-nacki-node-2024-10-04") {
+		t.Error("IsCommercial(commercial license) = false, want true")
 	}
 }
 

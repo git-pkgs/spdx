@@ -11,6 +11,50 @@ import (
 	"github.com/github/go-spdx/v2/spdxexp"
 )
 
+// Alternate keys in the ScanCode data that are not valid SPDX syntax.
+var invalidScanCodeKeys = map[string]bool{
+	"GPL 2.0":  true,
+	"GPL 2.0+": true,
+	"LicenseRef-scancode-x11-xconsortium_veillard": true,
+}
+
+func TestLicenseDataParses(t *testing.T) {
+	t.Parallel()
+	initCategoryMap()
+
+	for _, entry := range licenseData {
+		keys := append([]string{entry.SPDXLicenseKey}, entry.OtherSPDXKeys...)
+		for _, key := range keys {
+			if key == "" || invalidScanCodeKeys[key] {
+				continue
+			}
+			expression := key
+			if entry.IsException && lookupLicense(key) == "" {
+				expression = "GPL-2.0-only WITH " + key
+			}
+			if _, err := ParseSyntax(expression); err != nil {
+				t.Errorf("ParseSyntax(%q): %v", expression, err)
+			}
+			// Some alternate keys are retired or informal names rather than
+			// SPDX identifiers, which only ParseSyntax accepts.
+			if lookupLicense(key) == "" && lookupException(key) == "" && !hasPrefixFold(key, "LicenseRef-") {
+				continue
+			}
+			if _, err := Parse(expression); err != nil {
+				t.Errorf("Parse(%q): %v", expression, err)
+			}
+			if _, err := ExtractLicenses(expression); err != nil {
+				t.Errorf("ExtractLicenses(%q): %v", expression, err)
+			}
+		}
+		if entry.SPDXLicenseKey != "" {
+			if got := LicenseCategory(entry.SPDXLicenseKey); got != entry.category() {
+				t.Errorf("LicenseCategory(%q) = %q, want %q", entry.SPDXLicenseKey, got, entry.category())
+			}
+		}
+	}
+}
+
 func TestExtractLicensesMatchesGoSPDX(t *testing.T) {
 	t.Parallel()
 
