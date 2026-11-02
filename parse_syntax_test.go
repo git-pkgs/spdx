@@ -47,6 +47,29 @@ func TestParseSyntaxAllowsUnknownIdentifiers(t *testing.T) {
 			err:   ErrMissingOperand,
 		},
 		{
+			name:  "license with edge punctuation",
+			input: "-Future-License. OR - OR .",
+			want:  "-Future-License. OR - OR .",
+			err:   ErrInvalidLicenseID,
+		},
+		{
+			name:  "exception with edge punctuation",
+			input: "GPL-2.0-only WITH .Future-exception-",
+			want:  "GPL-2.0-only WITH .Future-exception-",
+			err:   ErrInvalidException,
+		},
+		{
+			name:  "exception reference with edge punctuation",
+			input: "GPL-2.0-only WITH LicenseRef--custom.",
+			want:  "GPL-2.0-only WITH LicenseRef--custom.",
+			err:   ErrMissingOperand,
+		},
+		{
+			name:  "references with edge punctuation",
+			input: "LicenseRef-scancode-gradle-enterprise-sla-2022-11- OR DocumentRef--vendor.:LicenseRef--",
+			want:  "LicenseRef-scancode-gradle-enterprise-sla-2022-11- OR DocumentRef--vendor.:LicenseRef--",
+		},
+		{
 			name:  "exception reference with plus modifier",
 			input: "GPL-2.0+ WITH LicenseRef-custom",
 			want:  "GPL-2.0+ WITH LicenseRef-custom",
@@ -173,37 +196,14 @@ func TestParseSyntaxRejectsMalformedExpressions(t *testing.T) {
 		"MIT WITH",
 		"MIT/Apache-2.0",
 		"Future_License-1.0",
-		"-MIT",
-		"MIT-",
-		".MIT",
-		"MIT.",
-		".",
-		"-",
 		"MIT WITH Future/exception",
-		"MIT WITH -Future-exception",
-		"MIT WITH Future-exception-",
-		"MIT WITH .",
 		"MIT WITH LicenseRef-",
-		"MIT WITH LicenseRef--custom",
-		"MIT WITH LicenseRef-.custom",
-		"MIT WITH LicenseRef-custom-",
-		"MIT WITH LicenseRef-custom.",
 		"MIT WITH LicenseRef-invalid/value",
 		"MIT WITH LicenseRef-custom+",
 		"MIT WITH LicenseRef-custom WITH LicenseRef-other",
 		"LicenseRef-",
-		"LicenseRef--",
-		"LicenseRef-.",
-		"LicenseRef--custom",
-		"LicenseRef-custom-",
-		"LicenseRef-.custom",
-		"LicenseRef-custom.",
 		"LicenseRef-invalid/value",
 		"DocumentRef-vendor",
-		"DocumentRef--:LicenseRef-custom",
-		"DocumentRef-.:LicenseRef-custom",
-		"DocumentRef--vendor:LicenseRef-custom",
-		"DocumentRef-vendor-:LicenseRef-custom",
 		"DocumentRef-:LicenseRef-custom",
 		"DocumentRef-vendor:LicenseRef-",
 		"DocumentRef-vendor:LicenseRef-invalid/value",
@@ -235,5 +235,21 @@ func TestParseSyntaxEnforcesLimits(t *testing.T) {
 		strings.Repeat(")", maxParseDepth+1)
 	if _, err := ParseSyntax(deeplyNested); !errors.Is(err, ErrExpressionTooLarge) {
 		t.Errorf("deeply nested expression error = %v, want %v", err, ErrExpressionTooLarge)
+	}
+}
+
+func TestLicenseRefWithTrailingHyphen(t *testing.T) {
+	t.Parallel()
+
+	const input = "MIT OR LicenseRef-scancode-gradle-enterprise-sla-2022-11-"
+	if !Valid(input) {
+		t.Errorf("Valid(%q) = false", input)
+	}
+	got, err := NormalizeExpression(input)
+	if err != nil {
+		t.Fatalf("NormalizeExpression(%q): %v", input, err)
+	}
+	if got != input {
+		t.Errorf("NormalizeExpression(%q) = %q", input, got)
 	}
 }

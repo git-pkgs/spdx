@@ -767,8 +767,7 @@ func validLicenseReference(reference *LicenseRef, document bool) bool {
 }
 
 func validIdentifier(identifier string) bool {
-	if identifier == "" || !isIdentifierAlphanumeric(rune(identifier[0])) ||
-		!isIdentifierAlphanumeric(rune(identifier[len(identifier)-1])) {
+	if identifier == "" {
 		return false
 	}
 	for _, character := range identifier {
