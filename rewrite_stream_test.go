@@ -15,7 +15,11 @@ func cloneRewritten(expression Expression, rewrite func(string) string) Expressi
 		}
 		return out
 	case *LicenseRef:
-		return &License{ID: rewrite(e.String())}
+		out := &License{ID: rewrite(e.reference())}
+		if e.Exception != "" {
+			out.Exception = rewrite(e.Exception)
+		}
+		return out
 	case *AndExpression:
 		return &AndExpression{Left: cloneRewritten(e.Left, rewrite), Right: cloneRewritten(e.Right, rewrite)}
 	case *OrExpression:
