@@ -361,6 +361,8 @@ func ParseStrict(expression string) (Expression, error) {
 // validates identifier syntax, operators, modifiers, and grouping. Known
 // identifiers are returned in their canonical form; unknown identifiers are
 // preserved as written.
+// For ScanCode compatibility, LicenseRef-* exception identifiers are also
+// accepted after WITH.
 //
 // Use ParseStrict when identifiers must also be present in the bundled SPDX
 // list.
@@ -618,7 +620,8 @@ func (p *parser) parseWith() (Expression, error) {
 			return nil, err
 		}
 
-		if p.current.typ != tokenLicense {
+		if p.current.typ != tokenLicense &&
+			(!p.allowUnknownIdentifiers || p.current.typ != tokenLicenseRef) {
 			return nil, fmt.Errorf("%w: expected exception after WITH", ErrMissingOperand)
 		}
 
@@ -726,7 +729,11 @@ func (p *parser) resolveExceptionIdentifier(identifier string) (string, error) {
 	if exception := lookupException(identifier); exception != "" {
 		return exception, nil
 	}
-	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+	valid := validIdentifier(identifier)
+	if hasPrefixFold(identifier, "LicenseRef-") {
+		valid = validLicenseRefString(identifier)
+	}
+	if p.allowUnknownIdentifiers && valid {
 		return identifier, nil
 	}
 	return "", fmt.Errorf("%w: %s", ErrInvalidException, identifier)
