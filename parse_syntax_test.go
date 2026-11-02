@@ -34,6 +34,24 @@ func TestParseSyntaxAllowsUnknownIdentifiers(t *testing.T) {
 			want:  "GPL-2.0-only WITH Future-exception-9.9",
 			err:   ErrInvalidException,
 		},
+		{
+			name:  "ScanCode exception reference",
+			input: "GPL-2.0-only WITH LicenseRef-scancode-cygwin-exception-2.0",
+			want:  "GPL-2.0-only WITH LicenseRef-scancode-cygwin-exception-2.0",
+			err:   ErrMissingOperand,
+		},
+		{
+			name:  "custom exception reference",
+			input: "gpl-2.0-ONLY WITH licenseref-Custom.1-2",
+			want:  "GPL-2.0-only WITH licenseref-Custom.1-2",
+			err:   ErrMissingOperand,
+		},
+		{
+			name:  "exception reference with plus modifier",
+			input: "GPL-2.0+ WITH LicenseRef-custom",
+			want:  "GPL-2.0+ WITH LicenseRef-custom",
+			err:   ErrMissingOperand,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -52,6 +70,57 @@ func TestParseSyntaxAllowsUnknownIdentifiers(t *testing.T) {
 				t.Errorf("ParseStrict(%q) error = %v, want %v", test.input, err, test.err)
 			}
 		})
+	}
+}
+
+func TestParseSyntaxExceptionReferenceRewrite(t *testing.T) {
+	t.Parallel()
+
+	exception := "LicenseRef-scancode-cygwin-exception-2.0"
+	input := "MIT OR GPL-2.0-only WITH " + exception + " AND Apache-2.0"
+	expression, err := ParseSyntax(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "MIT OR (GPL-2.0-only WITH " + exception + " AND Apache-2.0)"
+	if got := expression.String(); got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	wantAST := &OrExpression{
+		Left: &License{ID: "MIT"},
+		Right: &AndExpression{
+			Left:  &License{ID: "GPL-2.0-only", Exception: exception},
+			Right: &License{ID: "Apache-2.0"},
+		},
+	}
+	if !reflect.DeepEqual(expression, wantAST) {
+		t.Errorf("AST = %#v, want %#v", expression, wantAST)
+	}
+
+	var identifiers []string
+	rewritten := RewriteIdentifiers(expression, func(id string) string {
+		identifiers = append(identifiers, id)
+		if id == exception {
+			return "custom-exception"
+		}
+		return id
+	})
+	wantIdentifiers := []string{"MIT", "GPL-2.0-only", exception, "Apache-2.0"}
+	if !reflect.DeepEqual(identifiers, wantIdentifiers) {
+		t.Errorf("identifiers = %q, want %q", identifiers, wantIdentifiers)
+	}
+	wantRewritten := "MIT OR (GPL-2.0-only WITH custom-exception AND Apache-2.0)"
+	if rewritten != wantRewritten {
+		t.Errorf("RewriteIdentifiers() = %q, want %q", rewritten, wantRewritten)
+	}
+	if got := expression.String(); got != want {
+		t.Errorf("String() after rewrite = %q, want %q", got, want)
+	}
+	if _, err := Parse(input); err == nil {
+		t.Error("Parse() accepted an unknown exception reference")
+	}
+	if Valid(input) {
+		t.Error("Valid() accepted an unknown exception reference")
 	}
 }
 
@@ -114,6 +183,14 @@ func TestParseSyntaxRejectsMalformedExpressions(t *testing.T) {
 		"MIT WITH -Future-exception",
 		"MIT WITH Future-exception-",
 		"MIT WITH .",
+		"MIT WITH LicenseRef-",
+		"MIT WITH LicenseRef--custom",
+		"MIT WITH LicenseRef-.custom",
+		"MIT WITH LicenseRef-custom-",
+		"MIT WITH LicenseRef-custom.",
+		"MIT WITH LicenseRef-invalid/value",
+		"MIT WITH LicenseRef-custom+",
+		"MIT WITH LicenseRef-custom WITH LicenseRef-other",
 		"LicenseRef-",
 		"LicenseRef--",
 		"LicenseRef-.",
