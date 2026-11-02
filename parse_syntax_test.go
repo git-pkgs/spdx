@@ -139,8 +139,8 @@ func TestParseSyntaxExceptionReferenceRewrite(t *testing.T) {
 	if got := expression.String(); got != want {
 		t.Errorf("String() after rewrite = %q, want %q", got, want)
 	}
-	if _, err := Parse(input); err == nil {
-		t.Error("Parse() accepted an unknown exception reference")
+	if _, err := ParseStrict(input); err == nil {
+		t.Error("ParseStrict() accepted an unknown exception reference")
 	}
 	if Valid(input) {
 		t.Error("Valid() accepted an unknown exception reference")

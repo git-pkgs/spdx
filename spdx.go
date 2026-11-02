@@ -5,6 +5,7 @@ package spdx
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/github/go-spdx/v2/spdxexp"
@@ -134,11 +135,68 @@ func Satisfies(expression string, allowed []string) (bool, error) {
 //	ExtractLicenses("(MIT AND GPL-2.0) OR Apache-2.0")
 //	// returns ["Apache-2.0", "GPL-2.0", "MIT"], nil
 func ExtractLicenses(expression string) ([]string, error) {
-	return spdxexp.ExtractLicenses(expression)
+	parsed, err := parseWithoutNormalization(expression, parseModeExtract)
+	if err != nil {
+		return nil, err
+	}
+	var licenses []string
+	seen := map[string]bool{}
+	walkLicenses(parsed, func(license string) {
+		if !seen[license] {
+			seen[license] = true
+			licenses = append(licenses, license)
+		}
+	})
+	slices.Sort(licenses)
+	return licenses, nil
+}
+
+// walkLicenses calls visit with each license term in the format returned by
+// ExtractLicenses, keeping any exception attached.
+func walkLicenses(expression Expression, visit func(string)) {
+	switch value := expression.(type) {
+	case *License:
+		license := value.ID
+		if value.Plus {
+			license = plusLicense(license)
+		}
+		if value.Exception != "" {
+			license += " WITH " + value.Exception
+		}
+		visit(license)
+	case *LicenseRef:
+		visit(value.String())
+	case *AndExpression:
+		walkLicenses(value.Left, visit)
+		walkLicenses(value.Right, visit)
+	case *OrExpression:
+		walkLicenses(value.Left, visit)
+		walkLicenses(value.Right, visit)
+	}
+}
+
+// licenseIDs returns the license identifiers in an expression without
+// exceptions or modifiers, for category lookups.
+func licenseIDs(expression string) ([]string, error) {
+	parsed, err := parseWithoutNormalization(expression, parseModeExtract)
+	if err != nil {
+		return nil, err
+	}
+	return parsed.Licenses(), nil
 }
 
 // ValidateLicenses checks if all given license identifiers are valid SPDX identifiers.
 // Returns true and nil if all are valid, or false and the list of invalid licenses.
 func ValidateLicenses(licenses []string) (bool, []string) {
 	return spdxexp.ValidateLicenses(licenses)
+}
+
+func plusLicense(license string) string {
+	if strings.HasSuffix(license, "-or-later") {
+		return license
+	}
+	if later := lookupLicense(license + "-or-later"); later != "" {
+		return later
+	}
+	return license + "+"
 }

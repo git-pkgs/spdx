@@ -248,18 +248,33 @@ const (
 	maxParseLength = 1 << 20 // 1 MiB
 )
 
+type parseMode uint8
+
+const (
+	// parseModeStrict accepts only identifiers from the SPDX lists.
+	parseModeStrict parseMode = iota
+	// parseModeReferences also accepts LicenseRef-* exceptions, which
+	// ScanCode emits for exceptions missing from the SPDX list.
+	parseModeReferences
+	// parseModeExtract is parseModeReferences plus go-spdx's handling of
+	// redundant -only and -or-later suffixes, such as MIT-or-later.
+	parseModeExtract
+	// parseModeSyntax accepts any syntactically valid identifier.
+	parseModeSyntax
+)
+
 // parser parses SPDX expressions.
 type parser struct {
-	lexer                   lexer
-	current                 token
-	depth                   int
-	allowUnknownIdentifiers bool
+	lexer   lexer
+	current token
+	depth   int
+	mode    parseMode
 }
 
-func newParser(input string, allowUnknownIdentifiers bool) (parser, error) {
+func newParser(input string, mode parseMode) (parser, error) {
 	p := parser{
-		lexer:                   lexer{input: input},
-		allowUnknownIdentifiers: allowUnknownIdentifiers,
+		lexer: lexer{input: input},
+		mode:  mode,
 	}
 	tok, err := p.lexer.next()
 	if err != nil {
@@ -300,7 +315,7 @@ func Parse(expression string) (Expression, error) {
 	}
 
 	// Canonical expressions do not need the informal-name tokenization pass.
-	p, err := newParser(expression, false)
+	p, err := newParser(expression, parseModeReferences)
 	if err == nil {
 		if parsed, strictErr := p.parse(); strictErr == nil {
 			upgradeParsedGPL(parsed)
@@ -314,7 +329,7 @@ func Parse(expression string) (Expression, error) {
 		return nil, err
 	}
 
-	p, err = newParser(normalized, false)
+	p, err = newParser(normalized, parseModeReferences)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +368,7 @@ func upgradeParsedGPL(expression Expression) {
 //	ParseStrict("MIT OR Apache-2.0")  // succeeds
 //	ParseStrict("mit OR apache 2")    // fails - "apache 2" is not a valid SPDX ID
 func ParseStrict(expression string) (Expression, error) {
-	return parseWithoutNormalization(expression, false)
+	return parseWithoutNormalization(expression, parseModeStrict)
 }
 
 // ParseSyntax parses an SPDX expression without requiring bare license and
@@ -372,12 +387,12 @@ func ParseStrict(expression string) (Expression, error) {
 //	ParseSyntax("Future-License-1.0 OR MIT") // succeeds
 //	ParseStrict("Future-License-1.0 OR MIT") // fails
 func ParseSyntax(expression string) (Expression, error) {
-	return parseWithoutNormalization(expression, true)
+	return parseWithoutNormalization(expression, parseModeSyntax)
 }
 
 func parseWithoutNormalization(
 	expression string,
-	allowUnknownIdentifiers bool,
+	mode parseMode,
 ) (Expression, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
@@ -387,7 +402,7 @@ func parseWithoutNormalization(
 		return nil, ErrExpressionTooLarge
 	}
 
-	p, err := newParser(expression, allowUnknownIdentifiers)
+	p, err := newParser(expression, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +636,7 @@ func (p *parser) parseWith() (Expression, error) {
 		}
 
 		if p.current.typ != tokenLicense &&
-			(!p.allowUnknownIdentifiers || p.current.typ != tokenLicenseRef) {
+			(p.mode == parseModeStrict || p.current.typ != tokenLicenseRef) {
 			return nil, fmt.Errorf("%w: expected exception after WITH", ErrMissingOperand)
 		}
 
@@ -699,10 +714,16 @@ func (p *parser) parseLicenseAtom() (Expression, error) {
 	}
 
 	id, err := p.resolveLicenseIdentifier(value)
+	plus := false
+	if err != nil && p.mode == parseModeExtract {
+		if base, later := resolveSuffixedLicense(value); base != "" {
+			id, plus, err = base, later, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	license := &License{ID: id}
+	license := &License{ID: id, Plus: plus}
 	if err := p.advance(); err != nil {
 		return nil, err
 	}
@@ -715,11 +736,25 @@ func (p *parser) parseLicenseAtom() (Expression, error) {
 	return license, nil
 }
 
+// resolveSuffixedLicense resolves an identifier whose -only or -or-later
+// suffix is not part of the SPDX ID, reporting whether it meant "or later".
+func resolveSuffixedLicense(identifier string) (string, bool) {
+	if base, ok := strings.CutSuffix(identifier, "-only"); ok {
+		return lookupLicense(base), false
+	}
+	if base, ok := strings.CutSuffix(identifier, "-or-later"); ok {
+		if id := lookupLicense(base); id != "" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 func (p *parser) resolveLicenseIdentifier(identifier string) (string, error) {
 	if id := lookupLicense(identifier); id != "" {
 		return id, nil
 	}
-	if p.allowUnknownIdentifiers && validIdentifier(identifier) {
+	if p.mode == parseModeSyntax && validIdentifier(identifier) {
 		return identifier, nil
 	}
 	return "", fmt.Errorf("%w: %s", ErrInvalidLicenseID, identifier)
@@ -729,11 +764,11 @@ func (p *parser) resolveExceptionIdentifier(identifier string) (string, error) {
 	if exception := lookupException(identifier); exception != "" {
 		return exception, nil
 	}
-	valid := validIdentifier(identifier)
 	if hasPrefixFold(identifier, "LicenseRef-") {
-		valid = validLicenseRefString(identifier)
-	}
-	if p.allowUnknownIdentifiers && valid {
+		if p.mode != parseModeStrict && validLicenseRefString(identifier) {
+			return identifier, nil
+		}
+	} else if p.mode == parseModeSyntax && validIdentifier(identifier) {
 		return identifier, nil
 	}
 	return "", fmt.Errorf("%w: %s", ErrInvalidException, identifier)

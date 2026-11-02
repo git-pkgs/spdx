@@ -131,6 +131,9 @@ func (n *tokenNormalizer) flushException() error {
 	// Exception should be a single valid exception ID
 	exc := strings.Join(n.licenseWords, "-")
 	canonical := lookupException(exc)
+	if canonical == "" && len(n.licenseWords) == 1 && validLicenseRefString(exc) {
+		canonical = exc
+	}
 	if canonical == "" {
 		// Try the original form
 		exc = strings.Join(n.licenseWords, " ")

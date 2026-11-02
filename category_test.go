@@ -147,6 +147,9 @@ func TestHasCopyleft(t *testing.T) {
 		"MIT AND LGPL-2.1-only": true,
 		"Apache-2.0 OR MPL-2.0": true,  // MPL is weak copyleft
 		"Unlicense OR CC0-1.0":  false, // public domain
+
+		"GPL-2.0-only WITH Classpath-exception-2.0":                    true,
+		"MIT AND (GPL-2.0+ WITH LicenseRef-scancode-bacula-exception)": true,
 	}
 
 	for expr, expected := range tests {
@@ -170,6 +173,10 @@ func TestIsFullyPermissive(t *testing.T) {
 		"MIT OR GPL-3.0-only":   false,
 		"MIT AND LGPL-2.1-only": false,
 		"Apache-2.0 OR MPL-2.0": false, // MPL is copyleft limited
+
+		"MIT AND (Apache-2.0 WITH LLVM-exception)":              true,
+		"Apache-2.0 WITH LicenseRef-scancode-generic-exception": true,
+		"GPL-2.0-only WITH Classpath-exception-2.0":             false,
 	}
 
 	for expr, expected := range tests {
