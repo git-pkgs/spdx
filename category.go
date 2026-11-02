@@ -18,6 +18,7 @@ const (
 	CategoryCopyleft        Category = "Copyleft"
 	CategoryCopyleftLimited Category = "Copyleft Limited"
 	CategoryCommercial      Category = "Commercial"
+	CategoryNonCommercial   Category = "Non-Commercial"
 	CategoryProprietaryFree Category = "Proprietary Free"
 	CategoryPublicDomain    Category = "Public Domain"
 	CategoryPatentLicense   Category = "Patent License"
@@ -40,7 +41,7 @@ type licenseEntry struct {
 
 var (
 	categoryOnce sync.Once
-	categoryMap  map[string]Category // lowercase SPDX key -> category
+	licenseIndex map[string]*licenseEntry // lowercase key -> entry
 	licenseData  []licenseEntry
 )
 
@@ -48,35 +49,45 @@ func initCategoryMap() {
 	categoryOnce.Do(func() {
 		if err := json.Unmarshal(licensesJSON, &licenseData); err != nil {
 			// If JSON is invalid, map will be empty
-			categoryMap = make(map[string]Category)
+			licenseIndex = make(map[string]*licenseEntry)
 			return
 		}
 
-		// Each entry may have a primary SPDX key, alternative keys, and a license_key.
+		// Keys are added in priority order so that an SPDX identifier is
+		// never shadowed by another entry's alternate or ScanCode key, such
+		// as BSL-1.0 (Boost) and ScanCode's bsl-1.0 (Business Source).
 		estimatedKeys := 3
-		categoryMap = make(map[string]Category, len(licenseData)*estimatedKeys)
-		for _, entry := range licenseData {
-			cat := Category(entry.Category)
-			if cat == "" {
-				cat = CategoryUnknown
+		licenseIndex = make(map[string]*licenseEntry, len(licenseData)*estimatedKeys)
+		add := func(key string, entry *licenseEntry) {
+			key = strings.ToLower(key)
+			if _, exists := licenseIndex[key]; key != "" && !exists {
+				licenseIndex[key] = entry
 			}
-
-			// Map primary SPDX key
-			if entry.SPDXLicenseKey != "" {
-				categoryMap[strings.ToLower(entry.SPDXLicenseKey)] = cat
+		}
+		for i := range licenseData {
+			add(licenseData[i].SPDXLicenseKey, &licenseData[i])
+		}
+		for i := range licenseData {
+			for _, key := range licenseData[i].OtherSPDXKeys {
+				add(key, &licenseData[i])
 			}
-
-			// Map alternative SPDX keys (skip LicenseRef- ones)
-			for _, key := range entry.OtherSPDXKeys {
-				if !strings.HasPrefix(key, "LicenseRef-") {
-					categoryMap[strings.ToLower(key)] = cat
-				}
-			}
-
-			// Also map the license_key itself
-			categoryMap[strings.ToLower(entry.LicenseKey)] = cat
+		}
+		for i := range licenseData {
+			add(licenseData[i].LicenseKey, &licenseData[i])
 		}
 	})
+}
+
+func lookupLicenseEntry(license string) *licenseEntry {
+	initCategoryMap()
+	return licenseIndex[strings.ToLower(license)]
+}
+
+func (e *licenseEntry) category() Category {
+	if e.Category == "" {
+		return CategoryUnknown
+	}
+	return Category(e.Category)
 }
 
 // LicenseCategory returns the category for a given license identifier.
@@ -89,18 +100,15 @@ func initCategoryMap() {
 //	LicenseCategory("GPL-3.0-only")  // CategoryCopyleft
 //	LicenseCategory("MPL-2.0")       // CategoryCopyleftLimited
 func LicenseCategory(license string) Category {
-	initCategoryMap()
-
-	// Try exact match first
-	if cat, ok := categoryMap[strings.ToLower(license)]; ok {
-		return cat
+	if entry := lookupLicenseEntry(license); entry != nil {
+		return entry.category()
 	}
 
 	// Try without -only/-or-later suffixes
 	license = strings.TrimSuffix(license, "-only")
 	license = strings.TrimSuffix(license, "-or-later")
-	if cat, ok := categoryMap[strings.ToLower(license)]; ok {
-		return cat
+	if entry := lookupLicenseEntry(license); entry != nil {
+		return entry.category()
 	}
 
 	return CategoryUnknown
@@ -212,33 +220,15 @@ type LicenseInfo struct {
 // GetLicenseInfo returns detailed information about a license.
 // Returns nil if the license is not found.
 func GetLicenseInfo(license string) *LicenseInfo {
-	initCategoryMap()
-
-	lower := strings.ToLower(license)
-
-	for _, entry := range licenseData {
-		// Check SPDX key
-		if strings.ToLower(entry.SPDXLicenseKey) == lower {
-			return &LicenseInfo{
-				Key:          entry.LicenseKey,
-				SPDXKey:      entry.SPDXLicenseKey,
-				Category:     Category(entry.Category),
-				IsException:  entry.IsException,
-				IsDeprecated: entry.IsDeprecated,
-			}
-		}
-
-		// Check license key
-		if strings.ToLower(entry.LicenseKey) == lower {
-			return &LicenseInfo{
-				Key:          entry.LicenseKey,
-				SPDXKey:      entry.SPDXLicenseKey,
-				Category:     Category(entry.Category),
-				IsException:  entry.IsException,
-				IsDeprecated: entry.IsDeprecated,
-			}
-		}
+	entry := lookupLicenseEntry(license)
+	if entry == nil {
+		return nil
 	}
-
-	return nil
+	return &LicenseInfo{
+		Key:          entry.LicenseKey,
+		SPDXKey:      entry.SPDXLicenseKey,
+		Category:     Category(entry.Category),
+		IsException:  entry.IsException,
+		IsDeprecated: entry.IsDeprecated,
+	}
 }

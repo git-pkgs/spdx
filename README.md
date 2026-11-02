@@ -151,6 +151,7 @@ Available categories:
 - `CategoryCopyleftLimited` - LGPL-*, MPL-*, EPL-*
 - `CategoryPublicDomain` - Unlicense, CC0-1.0
 - `CategoryCommercial` - Commercial licenses
+- `CategoryNonCommercial` - Non-commercial use only
 - `CategoryProprietaryFree` - Free but proprietary
 - `CategorySourceAvailable` - Source-available licenses
 - `CategoryPatentLicense` - Patent grants

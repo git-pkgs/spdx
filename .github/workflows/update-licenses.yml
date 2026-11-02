@@ -45,12 +45,8 @@ jobs:
 
           echo "Downloaded $count licenses"
 
-          # Filter to OSS licenses and only needed fields
-          jq '[.[] | select(.category == "Permissive" or .category == "Copyleft" or .category == "Copyleft Limited" or .category == "Public Domain" or .category == "Free Restricted" or .category == "Source-available") | {license_key, category, spdx_license_key, other_spdx_license_keys, is_exception, is_deprecated}]' licenses.json.full > licenses.json.new
+          jq '[.[] | {license_key, category, spdx_license_key, other_spdx_license_keys, is_exception, is_deprecated}]' licenses.json.full > licenses.json.new
           rm licenses.json.full
-
-          filtered_count=$(jq length licenses.json.new)
-          echo "Filtered to $filtered_count OSS licenses"
 
       - name: Check for changes
         id: diff
