@@ -16,8 +16,6 @@ func RewriteIdentifiers(expression Expression, rewrite func(string) string) stri
 	case *License:
 		license := value.rewrittenLicense(rewrite)
 		return license.String()
-	case *LicenseRef:
-		return rewrite(value.String())
 	case *SpecialValue:
 		return value.Value
 	}
@@ -53,8 +51,9 @@ func (license *License) rewrittenLicense(rewrite func(string) string) License {
 	return rewritten
 }
 
-func (reference *LicenseRef) writeRewritten(out *strings.Builder, rewrite func(string) string, _ tokenType) {
-	out.WriteString(rewrite(reference.String()))
+func (reference *LicenseRef) writeRewritten(out *strings.Builder, rewrite func(string) string, parent tokenType) {
+	license := License{ID: reference.reference(), Exception: reference.Exception}
+	license.writeRewritten(out, rewrite, parent)
 }
 
 func (expression *AndExpression) writeRewritten(out *strings.Builder, rewrite func(string) string, parent tokenType) {

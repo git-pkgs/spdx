@@ -45,9 +45,18 @@ func (l *License) isExpr() {}
 type LicenseRef struct {
 	DocumentRef string // Optional document reference
 	LicenseRef  string // The license reference ID
+	Exception   string // Exception ID if using WITH
 }
 
 func (l *LicenseRef) String() string {
+	if l.Exception != "" {
+		return l.reference() + " WITH " + l.Exception
+	}
+	return l.reference()
+}
+
+// reference returns the reference without any exception.
+func (l *LicenseRef) reference() string {
 	if l.DocumentRef != "" {
 		return "DocumentRef-" + l.DocumentRef + ":LicenseRef-" + l.LicenseRef
 	}
@@ -55,7 +64,7 @@ func (l *LicenseRef) String() string {
 }
 
 func (l *LicenseRef) Licenses() []string {
-	return []string{l.String()}
+	return []string{l.reference()}
 }
 
 func (l *LicenseRef) isExpr() {}
@@ -105,14 +114,24 @@ func (e *OrExpression) String() string {
 		right = "(" + right + ")"
 	}
 	// License with exception should also be wrapped
-	if lic, ok := e.Right.(*License); ok && lic.Exception != "" {
+	if hasException(e.Right) {
 		right = "(" + right + ")"
 	}
-	if lic, ok := e.Left.(*License); ok && lic.Exception != "" {
+	if hasException(e.Left) {
 		left = "(" + left + ")"
 	}
 
 	return left + " OR " + right
+}
+
+func hasException(expression Expression) bool {
+	switch value := expression.(type) {
+	case *License:
+		return value.Exception != ""
+	case *LicenseRef:
+		return value.Exception != ""
+	}
+	return false
 }
 
 func (e *OrExpression) Licenses() []string {
@@ -415,6 +434,7 @@ type validatedExpressionKind uint8
 const (
 	validatedOther validatedExpressionKind = iota
 	validatedLicense
+	validatedLicenseWithException
 )
 
 type validationParser struct {
@@ -494,7 +514,7 @@ func (p *validationParser) parseWith() (validatedExpressionKind, bool) {
 		lookupException(p.current.value) == "" || !p.advance() {
 		return validatedOther, false
 	}
-	return validatedLicense, true
+	return validatedLicenseWithException, true
 }
 
 func (p *validationParser) parseAtom() (validatedExpressionKind, bool) {
@@ -528,13 +548,13 @@ func (p *validationParser) parseAtom() (validatedExpressionKind, bool) {
 		if !validLicenseRefString(p.current.value) || !p.advance() {
 			return validatedOther, false
 		}
-		return validatedOther, true
+		return validatedLicense, true
 
 	case tokenDocumentRef:
 		if !validDocumentRefString(p.current.value) || !p.advance() {
 			return validatedOther, false
 		}
-		return validatedOther, true
+		return validatedLicense, true
 
 	default:
 		return validatedOther, false
@@ -626,9 +646,17 @@ func (p *parser) parseWith() (Expression, error) {
 
 	// WITH only applies to licenses, not expressions
 	if p.current.typ == tokenWith {
-		license, ok := left.(*License)
-		if !ok {
+		var exceptionField *string
+		switch license := left.(type) {
+		case *License:
+			exceptionField = &license.Exception
+		case *LicenseRef:
+			exceptionField = &license.Exception
+		default:
 			return nil, fmt.Errorf("%w: WITH can only follow a license", ErrUnexpectedToken)
+		}
+		if *exceptionField != "" {
+			return nil, fmt.Errorf("%w: license already has an exception", ErrUnexpectedToken)
 		}
 
 		if err := p.advance(); err != nil {
@@ -645,7 +673,7 @@ func (p *parser) parseWith() (Expression, error) {
 			return nil, err
 		}
 
-		license.Exception = exception
+		*exceptionField = exception
 
 		if err := p.advance(); err != nil {
 			return nil, err
