@@ -435,6 +435,7 @@ const (
 	validatedOther validatedExpressionKind = iota
 	validatedLicense
 	validatedLicenseWithException
+	validatedSpecial
 )
 
 type validationParser struct {
@@ -477,7 +478,8 @@ func (p *validationParser) parseExpression() (validatedExpressionKind, bool) {
 		if !p.advance() {
 			return validatedOther, false
 		}
-		if _, ok := p.parseAnd(); !ok {
+		right, ok := p.parseAnd()
+		if !ok || kind == validatedSpecial || right == validatedSpecial {
 			return validatedOther, false
 		}
 		kind = validatedOther
@@ -494,7 +496,8 @@ func (p *validationParser) parseAnd() (validatedExpressionKind, bool) {
 		if !p.advance() {
 			return validatedOther, false
 		}
-		if _, ok := p.parseWith(); !ok {
+		right, ok := p.parseWith()
+		if !ok || kind == validatedSpecial || right == validatedSpecial {
 			return validatedOther, false
 		}
 		kind = validatedOther
@@ -534,7 +537,7 @@ func (p *validationParser) parseAtom() (validatedExpressionKind, bool) {
 	case tokenLicense:
 		value := p.current.value
 		if strings.EqualFold(value, "NONE") || strings.EqualFold(value, "NOASSERTION") {
-			return validatedOther, p.advance()
+			return validatedSpecial, p.advance()
 		}
 		if lookupLicense(value) == "" || !p.advance() {
 			return validatedOther, false
@@ -587,8 +590,23 @@ func (p *parser) parse() (Expression, error) {
 	if p.current.typ != tokenEOF {
 		return nil, fmt.Errorf("%w: %s", ErrUnexpectedToken, p.current.value)
 	}
+	if _, standalone := expr.(*SpecialValue); !standalone && containsSpecialValue(expr) {
+		return nil, ErrInvalidSpecialValue
+	}
 
 	return expr, nil
+}
+
+func containsSpecialValue(expression Expression) bool {
+	switch value := expression.(type) {
+	case *SpecialValue:
+		return true
+	case *AndExpression:
+		return containsSpecialValue(value.Left) || containsSpecialValue(value.Right)
+	case *OrExpression:
+		return containsSpecialValue(value.Left) || containsSpecialValue(value.Right)
+	}
+	return false
 }
 
 // parseExpression parses a full expression (handles OR, lowest precedence).

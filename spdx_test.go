@@ -606,3 +606,38 @@ func TestParseModerateNestingStillWorks(t *testing.T) {
 		t.Errorf("expected MIT, got %q", expr.String())
 	}
 }
+
+func TestSpecialValuesInCompoundExpressions(t *testing.T) {
+	t.Parallel()
+
+	parsers := map[string]func(string) (Expression, error){
+		"Parse":       Parse,
+		"ParseStrict": ParseStrict,
+		"ParseSyntax": ParseSyntax,
+	}
+	for _, input := range []string{
+		"MIT AND NOASSERTION",
+		"NONE OR MIT",
+		"(MIT OR NONE) AND Apache-2.0",
+		"(NOASSERTION) OR MIT",
+	} {
+		for name, parse := range parsers {
+			if _, err := parse(input); !errors.Is(err, ErrInvalidSpecialValue) {
+				t.Errorf("%s(%q) error = %v, want %v", name, input, err, ErrInvalidSpecialValue)
+			}
+		}
+		if Valid(input) {
+			t.Errorf("Valid(%q) = true", input)
+		}
+		if _, err := ExtractLicenses(input); err == nil {
+			t.Errorf("ExtractLicenses(%q) succeeded", input)
+		}
+		if IsFullyPermissive(input) {
+			t.Errorf("IsFullyPermissive(%q) = true", input)
+		}
+	}
+
+	if _, err := Parse("mit license OR NONE"); !errors.Is(err, ErrInvalidSpecialValue) {
+		t.Errorf("Parse with informal name error = %v, want %v", err, ErrInvalidSpecialValue)
+	}
+}
