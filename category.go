@@ -117,7 +117,7 @@ func LicenseCategory(license string) Category {
 //	ExpressionCategories("MIT OR GPL-3.0-only")
 //	// []Category{CategoryPermissive, CategoryCopyleft}
 func ExpressionCategories(expression string) ([]Category, error) {
-	licenses, err := ExtractLicenses(expression)
+	licenses, err := licenseIDs(expression)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ func IsCommercial(license string) bool {
 //	HasCopyleft("MIT OR GPL-3.0-only")     // true
 //	HasCopyleft("MIT AND LGPL-2.1-only")   // true
 func HasCopyleft(expression string) bool {
-	licenses, err := ExtractLicenses(expression)
+	licenses, err := licenseIDs(expression)
 	if err != nil {
 		return false
 	}
@@ -187,7 +187,7 @@ func HasCopyleft(expression string) bool {
 //	IsFullyPermissive("MIT AND BSD-3-Clause") // true
 //	IsFullyPermissive("MIT OR GPL-3.0-only")  // false
 func IsFullyPermissive(expression string) bool {
-	licenses, err := ExtractLicenses(expression)
+	licenses, err := licenseIDs(expression)
 	if err != nil {
 		return false
 	}
